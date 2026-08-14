@@ -29,11 +29,7 @@ def _fallback_version() -> str:
 
 
 def get_version() -> str:
-    """Return the package version, preferring pyproject.toml in a source tree."""
-    if _pyproject_path().is_file():
-        pyproject_version = _fallback_version()
-        if pyproject_version != "unknown":
-            return pyproject_version
+    """Return the installed package version, falling back to pyproject.toml."""
     try:
         return version(_PACKAGE_NAME)
     except PackageNotFoundError:

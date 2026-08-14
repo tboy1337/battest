@@ -51,7 +51,12 @@ runs:
         BATTEST_EXTRA_ARGS: ${{ inputs.extra-args }}
         BATTEST_SAFE_DEFAULTS: ${{ inputs.safe-defaults }}
       run: |
-        $safe = if ($env:BATTEST_SAFE_DEFAULTS -eq "true") { "--safe-defaults" } else { "--no-safe-defaults" }
+        $disabled = @("false", "0", "no", "off")
+        $safeValue = ""
+        if ($null -ne $env:BATTEST_SAFE_DEFAULTS) {
+          $safeValue = $env:BATTEST_SAFE_DEFAULTS.Trim().ToLowerInvariant()
+        }
+        $safe = if ($disabled -contains $safeValue) { "--no-safe-defaults" } else { "--safe-defaults" }
         $target = ""
         if ($null -ne $env:BATTEST_PATH) { $target = $env:BATTEST_PATH.Trim() }
         $extra = ""
@@ -61,7 +66,14 @@ runs:
         if ($target) { $cmdArgs += $target }
         if ($extra) {
           if ($extra.StartsWith("[")) {
-            $parsed = ConvertFrom-Json -InputObject $extra
+            try {
+              $parsed = ConvertFrom-Json -InputObject $extra
+            } catch {
+              throw "battest extra-args is not valid JSON: $_"
+            }
+            if ($parsed -is [System.Management.Automation.PSCustomObject]) {
+              throw "battest extra-args JSON must be an array of strings"
+            }
             foreach ($item in @($parsed)) { $cmdArgs += [string]$item }
           } else {
             $cmdArgs += $extra.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
@@ -69,5 +81,6 @@ runs:
         }
         Write-Host ("Running: python " + ($cmdArgs -join " "))
         python @cmdArgs
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        echo "junit-xml=$junit" >> $env:GITHUB_OUTPUT
+        $code = $LASTEXITCODE
+        "junit-xml=$junit" >> $env:GITHUB_OUTPUT
+        if ($code -ne 0) { exit $code }

@@ -5,6 +5,7 @@
 //! Call log: `_calls/<command>.log` is appended only when that file already exists.
 
 use std::env;
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -56,6 +57,38 @@ pub fn pipe_file(path: &Path, dest: &mut impl Write) -> io::Result<()> {
     Ok(())
 }
 
+/// Encode argv as a JSON array of strings without extra crates.
+#[must_use]
+pub fn encode_argv_json(args: &[String]) -> String {
+    let mut out = String::from("[");
+    for (index, arg) in args.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        push_json_string(&mut out, arg);
+    }
+    out.push(']');
+    out
+}
+
+fn push_json_string(out: &mut String, value: &str) {
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
 /// Read an exit code from a sidecar file. Missing or invalid files yield `0`.
 #[must_use]
 pub fn read_exit_code(path: &Path) -> u8 {
@@ -76,7 +109,7 @@ pub fn append_args(log_path: &Path, args: &[String]) -> io::Result<()> {
         .create(true)
         .append(true)
         .open(log_path)?;
-    writeln!(log_file, "{}", args.join(" "))?;
+    writeln!(log_file, "{}", encode_argv_json(args))?;
     Ok(())
 }
 
@@ -110,25 +143,26 @@ pub fn run_with(
     read_exit_code(&sidecar(&context.directory, &context.stem, "exit"))
 }
 
+/// Run the stub for `current` executable and `args`.
+#[must_use]
+pub fn run_from(current: io::Result<PathBuf>, args: &[String]) -> u8 {
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
+    run_with(&resolve_exe(current), args, &mut stdout, &mut stderr)
+}
+
 /// Run the PATH-shadow stub for this process executable and argv.
 #[must_use]
 pub fn run() -> u8 {
     let args: Vec<String> = env::args().skip(1).collect();
-    let mut stdout = io::stdout();
-    let mut stderr = io::stderr();
-    run_with(
-        &resolve_exe(env::current_exe()),
-        &args,
-        &mut stdout,
-        &mut stderr,
-    )
+    run_from(env::current_exe(), &args)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        append_args, call_log_path, pipe_file, read_exit_code, resolve_exe, run_with,
-        sidecar, stub_context,
+        append_args, call_log_path, encode_argv_json, pipe_file, read_exit_code,
+        resolve_exe, run_from, run_with, sidecar, stub_context,
     };
     use std::env;
     use std::fs;
@@ -167,6 +201,12 @@ mod tests {
     }
 
     fn remove_temp_dir(path: &Path) {
+        for _ in 0..20 {
+            if fs::remove_dir_all(path).is_ok() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
         let _ = fs::remove_dir_all(path);
     }
 
@@ -284,7 +324,7 @@ mod tests {
         append_args(&log_path, &[]).expect("empty argv");
         let text = fs::read_to_string(&log_path).expect("read log");
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines, ["/flushdns", "/all /x", ""]);
+        assert_eq!(lines, [r#"["/flushdns"]"#, r#"["/all","/x"]"#, "[]",]);
         remove_temp_dir(&dir);
     }
 
@@ -292,12 +332,13 @@ mod tests {
     fn append_args_filename_only_writes_in_cwd() {
         let dir = make_temp_dir();
         let previous = env::current_dir().expect("cwd");
-        let _restore = RestoreCwd(previous);
+        let _restore = RestoreCwd(previous.clone());
         env::set_current_dir(&dir).expect("chdir");
         append_args(Path::new("flat.log"), &["z".to_owned()])
             .expect("append filename-only");
         let text = fs::read_to_string(dir.join("flat.log")).expect("read");
-        assert_eq!(text.lines().collect::<Vec<_>>(), ["z"]);
+        assert_eq!(text.lines().collect::<Vec<_>>(), [r#"["z"]"#]);
+        env::set_current_dir(&previous).expect("restore cwd");
         remove_temp_dir(&dir);
     }
 
@@ -349,7 +390,7 @@ mod tests {
         assert_eq!(stdout, b"out");
         assert_eq!(stderr, b"err");
         let log = fs::read_to_string(&log_path).expect("read log");
-        assert_eq!(log.lines().collect::<Vec<_>>(), ["/all"]);
+        assert_eq!(log.lines().collect::<Vec<_>>(), [r#"["/all"]"#]);
 
         let mut empty_out = Vec::new();
         let mut empty_err = Vec::new();
@@ -378,7 +419,30 @@ mod tests {
     }
 
     #[test]
-    fn run_executes_against_the_test_process() {
+    fn encode_argv_json_escapes_quotes_and_controls() {
+        assert_eq!(encode_argv_json(&[]), "[]");
+        assert_eq!(
+            encode_argv_json(&["a\"b".to_owned(), "c\\d".to_owned()]),
+            r#"["a\"b","c\\d"]"#
+        );
+        assert_eq!(encode_argv_json(&["foo bar".to_owned()]), r#"["foo bar"]"#);
+        let with_controls = encode_argv_json(&["a\n\r\t\u{0001}".to_owned()]);
+        assert_eq!(with_controls, r#"["a\n\r\t\u0001"]"#);
+    }
+
+    #[test]
+    fn run_from_uses_isolated_exe() {
+        let dir = make_temp_dir();
+        let exe = dir.join("tool.exe");
+        fs::write(&exe, b"stub").expect("write exe placeholder");
+        fs::write(dir.join("tool.exit"), "7").expect("exit");
+        let code = run_from(Ok(exe), &["/x".to_owned()]);
+        assert_eq!(code, 7);
+        remove_temp_dir(&dir);
+    }
+
+    #[test]
+    fn run_wrapper_without_sidecars() {
         let _ = super::run();
     }
 }

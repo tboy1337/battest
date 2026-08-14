@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 import battest
-from battest._version import _fallback_version, get_version
+from battest._version import _fallback_version, _pyproject_path, get_version
 
 
 def test_version_is_pep440_like() -> None:
@@ -17,6 +17,9 @@ def test_version_is_pep440_like() -> None:
     assert battest.__version__ == version
     assert battest.__license__ == "AGPL-3.0-or-later"
     assert "load_case" in battest.__all__
+    pyproject = _pyproject_path()
+    assert pyproject.name == "pyproject.toml"
+    assert pyproject.is_file()
 
 
 def test_fallback_version_missing_and_without_version_line(
@@ -32,11 +35,11 @@ def test_fallback_version_missing_and_without_version_line(
     assert _fallback_version() == "unknown"
 
 
-def test_get_version_uses_installed_metadata(
+def test_get_version_prefers_installed_metadata_over_pyproject(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text("[project]\nname = 'battest'\n", encoding="utf-8")
+    pyproject.write_text('[project]\nversion = "0.0.1"\n', encoding="utf-8")
     monkeypatch.setattr("battest._version._pyproject_path", lambda: pyproject)
     monkeypatch.setattr("battest._version.version", lambda _name: "9.9.9")
     assert get_version() == "9.9.9"
@@ -54,3 +57,17 @@ def test_get_version_package_not_found(
 
     monkeypatch.setattr("battest._version.version", boom)
     assert get_version() == "unknown"
+
+
+def test_get_version_falls_back_to_pyproject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    monkeypatch.setattr("battest._version._pyproject_path", lambda: pyproject)
+
+    def boom(_name: str) -> str:
+        raise PackageNotFoundError(_name)
+
+    monkeypatch.setattr("battest._version.version", boom)
+    assert get_version() == "1.2.3"

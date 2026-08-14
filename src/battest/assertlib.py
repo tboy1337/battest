@@ -108,7 +108,7 @@ def _fail(
     actual: str | None = None,
     diff: str | None = None,
 ) -> AssertionFailure:
-    LOGGER.info("assertion failure kind=%s message=%s", kind, message)
+    LOGGER.debug("assertion failure kind=%s message=%s", kind, message)
     return AssertionFailure(
         kind=kind,
         message=message,

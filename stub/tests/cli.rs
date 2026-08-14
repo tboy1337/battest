@@ -18,6 +18,13 @@ fn make_temp_dir() -> PathBuf {
 
 fn remove_temp_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+    for _ in 0..20 {
+        if !path.exists() {
+            return;
+        }
+        let _ = fs::remove_dir_all(path);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 fn stub_binary() -> PathBuf {
@@ -65,7 +72,7 @@ fn copies_stdout_stderr_and_exit_from_sidecars() {
     assert_eq!(output.stdout, b"flushed-ok\n");
     assert_eq!(output.stderr, b"warn\n");
     let log = fs::read_to_string(dir.join("_calls").join("ipconfig.log")).expect("log");
-    assert_eq!(log.lines().collect::<Vec<_>>(), ["/flushdns"]);
+    assert_eq!(log.lines().collect::<Vec<_>>(), [r#"["/flushdns"]"#]);
     remove_temp_dir(&dir);
 }
 
@@ -81,7 +88,7 @@ fn missing_sidecars_yield_empty_output_and_zero_exit() {
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
     let log = fs::read_to_string(dir.join("_calls").join("timeout.log")).expect("log");
-    assert_eq!(log, "\n");
+    assert_eq!(log, "[]\n");
     remove_temp_dir(&dir);
 }
 
@@ -109,7 +116,10 @@ fn returns_to_caller_across_multiple_invocations() {
     assert_eq!(first.status.code(), Some(0));
     assert_eq!(second.status.code(), Some(0));
     let log = fs::read_to_string(dir.join("_calls").join("net.log")).expect("log");
-    assert_eq!(log.lines().collect::<Vec<_>>(), ["session", "user"]);
+    assert_eq!(
+        log.lines().collect::<Vec<_>>(),
+        [r#"["session"]"#, r#"["user"]"#]
+    );
     remove_temp_dir(&dir);
 }
 
@@ -126,7 +136,7 @@ fn logs_multiple_arguments_on_one_line() {
     let log = fs::read_to_string(dir.join("_calls").join("reg.log")).expect("log");
     assert_eq!(
         log.lines().collect::<Vec<_>>(),
-        [r"query HKLM\Software /v Name"]
+        [r#"["query","HKLM\\Software","/v","Name"]"#]
     );
     remove_temp_dir(&dir);
 }

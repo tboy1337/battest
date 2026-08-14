@@ -513,6 +513,52 @@ def test_copy_path_must_stay_under_fixture_dir(tmp_path: Path) -> None:
         load_cases_from_path(manifest)
 
 
+def test_script_must_stay_under_fixture_dir(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    outside = tmp_path.parent / "battest-outside.cmd"
+    outside.write_text("@echo off\n", encoding="utf-8")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "description: escape\nscript: ../battest-outside.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="script path escapes"):
+        load_cases_from_path(manifest)
+
+
+def test_script_rejects_absolute_path(tmp_path: Path) -> None:
+    script = _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    posix = script.resolve().as_posix()
+    manifest.write_text(
+        f"description: abs\nscript: '{posix}'\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="script path escapes"):
+        load_cases_from_path(manifest)
+
+
+def test_setup_and_teardown_must_stay_under_fixture_dir(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    outside = tmp_path.parent / "battest-outside-setup.cmd"
+    outside.write_text("@echo off\n", encoding="utf-8")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "description: setup escape\nscript: run.cmd\n"
+        "setup: ../battest-outside-setup.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="setup path escapes"):
+        load_cases_from_path(manifest)
+    manifest.write_text(
+        "description: teardown escape\nscript: run.cmd\n"
+        "teardown: ../battest-outside-setup.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="teardown path escapes"):
+        load_cases_from_path(manifest)
+
+
 def test_output_matcher_roundtrip() -> None:
     matcher = OutputMatcher(contains="hello world", newline="auto")
     restored = OutputMatcher.model_validate(matcher.model_dump())

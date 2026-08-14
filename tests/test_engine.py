@@ -25,6 +25,7 @@ from battest.engine import (
     require_windows,
     resolved_timeout,
 )
+from battest.mocks import MockError
 from battest.models import (
     Case,
     EngineConfig,
@@ -759,6 +760,103 @@ def test_teardown_oserror_is_logged(
     assert result.error_message is not None
     assert "teardown boom" in result.error_message
     assert "teardown boom" in caplog.text
+
+
+def test_setup_oserror_is_logged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    setup = tmp_path / "setup.cmd"
+    setup.write_text("@echo off\n", encoding="utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="s",
+        description="s",
+        source_path=tmp_path / "s.yaml",
+        script_path=script,
+        setup_path=setup,
+        expect=Expect(exit_code=0),
+    )
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> tuple[int, str, str, bool]:
+        raise OSError("setup boom")
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    with caplog.at_level("ERROR", logger="battest.engine"):
+        result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "setup boom" in result.error_message
+    assert "setup boom" in caplog.text
+
+
+def test_sut_oserror_is_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="x",
+        description="x",
+        source_path=tmp_path / "x.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> tuple[int, str, str, bool]:
+        raise OSError("cmd missing")
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    with caplog.at_level("ERROR", logger="battest.engine"):
+        result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "cmd missing" in result.error_message
+    assert "cmd missing" in caplog.text
+
+
+def test_mock_error_becomes_error_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="m",
+        description="m",
+        source_path=tmp_path / "m.yaml",
+        script_path=script,
+        mocks={"ipconfig": MockSpec()},
+        expect=Expect(exit_code=0),
+    )
+
+    def boom(_root: Path, _mocks: dict[str, MockSpec]) -> Path:
+        raise MockError("battest_stub.exe is missing")
+
+    monkeypatch.setattr("battest.engine.write_mock_tree", boom)
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "battest_stub.exe is missing" in result.error_message
 
 
 def test_teardown_failure_keeps_fail_outcome(

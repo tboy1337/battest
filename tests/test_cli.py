@@ -12,6 +12,7 @@ import yaml
 from battest.api import load_case, run_case, run_cases
 from battest.cli import build_parser, main
 from battest.engine import EngineError
+from battest.mocks import MockError
 from battest.models import Case, EngineConfig, Expect, Outcome, RunResult
 
 
@@ -212,6 +213,51 @@ def test_main_execute_engine_error(
     assert main(["run", str(tmp_path), "--verbose", "--include-spec-exec"]) == 2
 
 
+def test_main_execute_mock_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    (tmp_path / "ok.battest.yaml").write_text(
+        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+
+    def boom(_cases: list[Case], _config: EngineConfig) -> list[RunResult]:
+        raise MockError("battest_stub.exe is missing")
+
+    monkeypatch.setattr("battest.cli.execute_cases", boom)
+    assert main(["run", str(tmp_path)]) == 2
+
+
+def test_main_junit_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    (tmp_path / "ok.battest.yaml").write_text(
+        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+    monkeypatch.setattr(
+        "battest.cli.execute_cases",
+        lambda cases, config: [
+            RunResult(
+                case_id=cases[0].case_id,
+                description=cases[0].description,
+                outcome=Outcome.PASS,
+            )
+        ],
+    )
+
+    def boom_write(_results: list[RunResult], _path: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("battest.cli.write_junit_xml", boom_write)
+    junit = tmp_path / "junit.xml"
+    assert main(["run", str(tmp_path), "--junit-xml", str(junit)]) == 2
+
+
 def test_load_case_file_and_dir(tmp_path: Path) -> None:
     script = tmp_path / "input.cmd"
     script.write_text("@echo off\n", encoding="utf-8")
@@ -260,3 +306,12 @@ def test_root_action_yml_is_composite() -> None:
     assert "BATTEST_PATH" in run_source
     assert "python @cmdArgs" in run_source
     assert "ConvertFrom-Json" in run_source
+    python_at = run_source.index("python @cmdArgs")
+    output_at = run_source.index('"junit-xml=$junit" >> $env:GITHUB_OUTPUT')
+    exit_at = run_source.index("if ($code -ne 0) { exit $code }")
+    assert python_at < output_at < exit_at
+    assert "$code = $LASTEXITCODE" in run_source
+    assert "extra-args is not valid JSON" in run_source
+    assert "JSON must be an array of strings" in run_source
+    assert '$disabled = @("false", "0", "no", "off")' in run_source
+    assert '$env:BATTEST_SAFE_DEFAULTS -eq "true"' not in run_source

@@ -41,7 +41,7 @@ def schema_payload() -> dict[str, Any]:
 
 def load_yaml_mapping(path: Path) -> dict[str, Any]:
     """Read a YAML file and require a mapping at the root."""
-    LOGGER.info("loading yaml %s", path)
+    LOGGER.debug("loading yaml %s", path)
     if not path.is_file():
         raise SchemaError(f"fixture file not found: {path}")
     try:
@@ -65,19 +65,27 @@ def parse_document(payload: Mapping[str, Any], source: Path) -> CaseDocument:
     return document
 
 
-def _resolve_optional(base_dir: Path, value: str | None) -> Path | None:
-    if value is None:
-        return None
-    path = (
-        (base_dir / value).resolve() if not Path(value).is_absolute() else Path(value)
-    )
+def _confine_to_fixture(base_dir: Path, value: str, source: Path, label: str) -> Path:
+    """Resolve value under base_dir and reject absolute or escaping paths."""
+    if Path(value).is_absolute():
+        raise SchemaError(
+            f"{label} path escapes fixture directory for {source}: {value}"
+        )
+    resolved_base = base_dir.resolve()
+    path = (base_dir / value).resolve()
+    try:
+        path.relative_to(resolved_base)
+    except ValueError as exc:
+        raise SchemaError(
+            f"{label} path escapes fixture directory for {source}: {value}"
+        ) from exc
     return path
 
 
 def _require_script(base_dir: Path, document: CaseDocument, source: Path) -> Path:
     if document.script:
-        script_path = _resolve_optional(base_dir, document.script)
-        if script_path is None or not script_path.is_file():
+        script_path = _confine_to_fixture(base_dir, document.script, source, "script")
+        if not script_path.is_file():
             raise SchemaError(f"script not found for {source}: {document.script}")
         return script_path
     sibling = base_dir / "input.cmd"
@@ -128,17 +136,10 @@ def _collect_warnings(document: CaseDocument, script_path: Path) -> list[str]:
 
 def _copy_paths(base_dir: Path, names: list[str], source: Path) -> list[Path]:
     resolved: list[Path] = []
-    resolved_base = base_dir.resolve()
     for name in names:
-        path = _resolve_optional(base_dir, name)
-        if path is None or not path.exists():
+        path = _confine_to_fixture(base_dir, name, source, "copy")
+        if not path.exists():
             raise SchemaError(f"copy path not found for {source}: {name}")
-        try:
-            path.resolve().relative_to(resolved_base)
-        except ValueError as exc:
-            raise SchemaError(
-                f"copy path escapes fixture directory for {source}: {name}"
-            ) from exc
         resolved.append(path)
     return resolved
 
@@ -157,16 +158,22 @@ def _case_from_document(
 ) -> Case:
     base_dir = source.parent
     script_path = _require_script(base_dir, document, source)
-    setup_path = _resolve_optional(base_dir, document.setup)
-    teardown_path = _resolve_optional(base_dir, document.teardown)
-    if document.setup and (setup_path is None or not setup_path.is_file()):
-        raise SchemaError(f"setup script not found for {source}: {document.setup}")
-    if document.teardown and (teardown_path is None or not teardown_path.is_file()):
-        raise SchemaError(
-            f"teardown script not found for {source}: {document.teardown}"
+    setup_path: Path | None = None
+    if document.setup:
+        setup_path = _confine_to_fixture(base_dir, document.setup, source, "setup")
+        if not setup_path.is_file():
+            raise SchemaError(f"setup script not found for {source}: {document.setup}")
+    teardown_path: Path | None = None
+    if document.teardown:
+        teardown_path = _confine_to_fixture(
+            base_dir, document.teardown, source, "teardown"
         )
+        if not teardown_path.is_file():
+            raise SchemaError(
+                f"teardown script not found for {source}: {document.teardown}"
+            )
     warnings = _collect_warnings(document, script_path)
-    LOGGER.info(
+    LOGGER.debug(
         "resolved case id=%s script=%s args=%s timeout=%s mocks=%s",
         case_id,
         script_path,

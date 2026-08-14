@@ -22,7 +22,9 @@ script that runs `ipconfig` without `CALL` never returns if the shadow is a
 `.cmd` file. Sidecar files (`ipconfig.stdout`, `ipconfig.stderr`,
 `ipconfig.exit`) supply canned output and the exit code. When call recording
 is enabled (the default), battest pre-creates `_calls/ipconfig.log` and each
-invocation appends argv.
+invocation appends one JSON array of argv strings (so arguments that contain
+spaces stay distinct). `expect_calls.args_contains` is still a substring match,
+so `/flushdns` matches `["/flushdns"]`.
 
 The stub binary is `src/battest/data/battest_stub.exe`, built from the
 `stub/` crate:
@@ -50,6 +52,10 @@ off.
 - `reg`
 - `diskpart`
 - `bcdedit`
+- `cipher`
+- `netsh`
+- `takeown`
+- `wmic`
 
 The stub exits `1` and writes `battest: blocked by --safe-defaults: <name>` to
 stderr. A case may replace the stub with its own `mocks:` entry or list the

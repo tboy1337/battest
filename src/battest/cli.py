@@ -12,6 +12,7 @@ from battest.constants import DEFAULT_MAX_DIFF, DEFAULT_TIMEOUT_SECONDS
 from battest.discover import default_root, discover_cases
 from battest.engine import EngineError, execute_cases, require_windows
 from battest.logging_config import configure_logging, get_logger
+from battest.mocks import MockError
 from battest.models import EngineConfig
 from battest.report import exit_status, render_console, write_junit_xml
 from battest.schema import SchemaError
@@ -129,9 +130,18 @@ def _run_command(args: argparse.Namespace) -> int:
         LOGGER.error("%s", exc)
         print(str(exc), file=sys.stderr)
         return 2
+    except MockError as exc:
+        LOGGER.error("%s", exc)
+        print(str(exc), file=sys.stderr)
+        return 2
     render_console(results, sys.stdout)
     if args.junit_xml:
-        write_junit_xml(results, Path(args.junit_xml))
+        try:
+            write_junit_xml(results, Path(args.junit_xml))
+        except OSError as exc:
+            LOGGER.error("failed to write junit xml: %s", exc)
+            print(f"failed to write junit xml: {exc}", file=sys.stderr)
+            return 2
     return exit_status(results)
 
 

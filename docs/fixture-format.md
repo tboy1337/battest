@@ -54,8 +54,9 @@ If `params` is present, battest runs the base document **and** each overlay.
 Overlay ids become `name[id]` and must be unique. Mock `exit_code` values must
 be 0–255 (cmd `ERRORLEVEL` range). `copy` entries are placed in the isolated
 work dir using the relative path from the fixture file; paths that escape the
-fixture directory are rejected. `equals_file` paths are likewise confined to
-the fixture directory (absolute paths and `..` escapes are rejected).
+fixture directory are rejected. `script`, `setup`, `teardown`, and `equals_file`
+paths are likewise confined to the fixture directory (absolute paths and `..`
+escapes are rejected).
 
 `setup` runs before the script under test. Assertions (exit code, output, env,
 files, mock calls) run against the work directory **before** `teardown`.

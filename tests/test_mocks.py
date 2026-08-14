@@ -21,6 +21,10 @@ def test_effective_mocks_safe_defaults() -> None:
     merged = effective_mocks({}, [], safe_defaults=True)
     assert "format" in merged
     assert "reg" in merged
+    assert "netsh" in merged
+    assert "cipher" in merged
+    assert "takeown" in merged
+    assert "wmic" in merged
     assert merged["format"].exit_code == 1
 
 

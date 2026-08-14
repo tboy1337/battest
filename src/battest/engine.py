@@ -18,6 +18,7 @@ from battest.encoding import console_encoding, decode_output
 from battest.envsnap import filter_helper_vars, parse_set_output
 from battest.logging_config import get_logger
 from battest.mocks import (
+    MockError,
     effective_mocks,
     read_call_logs,
     warn_internal_absolute_paths,
@@ -114,7 +115,7 @@ def _seed_work_dir(work_dir: Path, copy_paths: list[Path], base_dir: Path) -> No
         relative = source.resolve().relative_to(resolved_base)
         destination = work_dir / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        LOGGER.info("seeding %s -> %s", source, destination)
+        LOGGER.debug("seeding %s -> %s", source, destination)
         if source.is_dir():
             shutil.copytree(source, destination)
         else:
@@ -129,7 +130,7 @@ def _run_process(
     timeout_seconds: float,
     encoding: str,
 ) -> tuple[int, str, str, bool]:
-    LOGGER.info("exec command=%s cwd=%s timeout=%s", command, cwd, timeout_seconds)
+    LOGGER.debug("exec command=%s cwd=%s timeout=%s", command, cwd, timeout_seconds)
     stdin_bytes = _encode_stdin(stdin_text, encoding)
     creationflags = CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
     timed_out = False
@@ -192,7 +193,7 @@ def _combined_env(case: Case, work_dir: Path, mock_dir: Path | None) -> dict[str
     path_key = collapse_path_keys(env)
     if mock_dir is not None:
         env[path_key] = str(mock_dir) + os.pathsep + env.get(path_key, "")
-        LOGGER.info("PATH prefixed with mock dir %s key=%s", mock_dir, path_key)
+        LOGGER.debug("PATH prefixed with mock dir %s key=%s", mock_dir, path_key)
     return env
 
 
@@ -245,14 +246,18 @@ def _run_setup(
 ) -> str | None:
     if case.setup_path is None:
         return None
-    setup_exit, _, setup_err, setup_timeout = _run_process(
-        build_cmd_line(case.setup_path, []),
-        work_dir,
-        env,
-        "",
-        timeout,
-        encoding,
-    )
+    try:
+        setup_exit, _, setup_err, setup_timeout = _run_process(
+            build_cmd_line(case.setup_path, []),
+            work_dir,
+            env,
+            "",
+            timeout,
+            encoding,
+        )
+    except OSError as exc:
+        LOGGER.error("setup failed for %s: %s", case.case_id, exc)
+        return f"setup failed: {exc}"
     if setup_timeout or setup_exit != 0:
         message = (
             f"setup failed exit={setup_exit} timeout={setup_timeout} "
@@ -374,6 +379,71 @@ def _evaluate_after_run(
     )
 
 
+def _error_result(
+    case: Case, started: float, warnings: list[str], message: str
+) -> RunResult:
+    return RunResult(
+        case_id=case.case_id,
+        description=case.description,
+        outcome=Outcome.ERROR,
+        error_message=message,
+        duration_seconds=time.perf_counter() - started,
+        warnings=warnings,
+    )
+
+
+def _prepare_work_dir(
+    case: Case, config: EngineConfig, work_dir: Path
+) -> tuple[Path, Path | None, dict[str, str]]:
+    _seed_work_dir(work_dir, case.copy_paths, case.source_path.parent)
+    mocks = effective_mocks(case.mocks, case.allow, config.safe_defaults)
+    mock_dir = write_mock_tree(work_dir, mocks) if mocks else None
+    wrapper = work_dir / WRAPPER_NAME
+    wrapper.write_text(_WRAPPER_TEMPLATE, encoding="utf-8")
+    env = _combined_env(case, work_dir, mock_dir)
+    return wrapper, mock_dir, env
+
+
+def _run_sut(
+    case: Case,
+    config: EngineConfig,
+    work_dir: Path,
+    wrapper: Path,
+    mock_dir: Path | None,
+    env: dict[str, str],
+    encoding: str,
+    timeout: float,
+    warnings: list[str],
+    started: float,
+) -> RunResult:
+    setup_error = _run_setup(case, work_dir, env, timeout, encoding)
+    if setup_error is not None:
+        return _error_result(case, started, warnings, setup_error)
+    try:
+        command = build_cmd_line(wrapper, case.args)
+        exit_code, stdout, stderr, timed_out = _run_process(
+            command, work_dir, env, case.stdin, timeout, encoding
+        )
+    except OSError as exc:
+        LOGGER.error("sut failed for %s: %s", case.case_id, exc)
+        return _error_result(case, started, warnings, str(exc))
+    duration = time.perf_counter() - started
+    return _evaluate_after_run(
+        case,
+        config,
+        work_dir,
+        mock_dir,
+        encoding,
+        timeout,
+        warnings,
+        duration,
+        exit_code,
+        stdout,
+        stderr,
+        timed_out,
+    )
+
+
 def execute_case(case: Case, config: EngineConfig) -> RunResult:
     """Run one case under cmd.exe, then evaluate assertions, then teardown."""
     require_windows()
@@ -388,45 +458,27 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
         timeout,
         config.safe_defaults,
     )
-    with tempfile.TemporaryDirectory(prefix="battest-") as raw_temp:
+    with tempfile.TemporaryDirectory(
+        prefix="battest-", ignore_cleanup_errors=True
+    ) as raw_temp:
         work_dir = Path(raw_temp)
-        _seed_work_dir(work_dir, case.copy_paths, case.source_path.parent)
-        mocks = effective_mocks(case.mocks, case.allow, config.safe_defaults)
-        mock_dir = write_mock_tree(work_dir, mocks) if mocks else None
-        wrapper = work_dir / WRAPPER_NAME
-        wrapper.write_text(_WRAPPER_TEMPLATE, encoding="utf-8")
-        env = _combined_env(case, work_dir, mock_dir)
-        setup_error = _run_setup(case, work_dir, env, timeout, encoding)
-        if setup_error is None:
-            command = build_cmd_line(wrapper, case.args)
-            exit_code, stdout, stderr, timed_out = _run_process(
-                command, work_dir, env, case.stdin, timeout, encoding
-            )
-            duration = time.perf_counter() - started
-            result = _evaluate_after_run(
-                case,
-                config,
-                work_dir,
-                mock_dir,
-                encoding,
-                timeout,
-                warnings,
-                duration,
-                exit_code,
-                stdout,
-                stderr,
-                timed_out,
-            )
-        else:
-            duration = time.perf_counter() - started
-            result = RunResult(
-                case_id=case.case_id,
-                description=case.description,
-                outcome=Outcome.ERROR,
-                error_message=setup_error,
-                duration_seconds=duration,
-                warnings=warnings,
-            )
+        try:
+            wrapper, mock_dir, env = _prepare_work_dir(case, config, work_dir)
+        except (OSError, MockError) as exc:
+            LOGGER.error("case %s failed before execution: %s", case.case_id, exc)
+            return _error_result(case, started, warnings, str(exc))
+        result = _run_sut(
+            case,
+            config,
+            work_dir,
+            wrapper,
+            mock_dir,
+            env,
+            encoding,
+            timeout,
+            warnings,
+            started,
+        )
         teardown_error = _run_teardown(case, work_dir, env, timeout, encoding)
         return _apply_teardown_result(result, teardown_error)
 

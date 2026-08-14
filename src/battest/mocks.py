@@ -106,7 +106,7 @@ def write_mock_tree(root: Path, mocks: dict[str, MockSpec]) -> Path:
             (mock_dir / f"{lowered}.stdout").write_text(spec.stdout, encoding="utf-8")
         if spec.stderr:
             (mock_dir / f"{lowered}.stderr").write_text(spec.stderr, encoding="utf-8")
-        LOGGER.info(
+        LOGGER.debug(
             "wrote mock stub %s exit=%s stdout_len=%s stderr_len=%s",
             stub_path,
             spec.exit_code,

@@ -4,10 +4,14 @@ from __future__ import annotations
 
 SAFE_DEFAULT_COMMANDS: tuple[str, ...] = (
     "bcdedit",
+    "cipher",
     "diskpart",
     "format",
+    "netsh",
     "reg",
     "shutdown",
+    "takeown",
+    "wmic",
 )
 
 INTERNAL_DESTRUCTIVE_VERBS: tuple[str, ...] = (
