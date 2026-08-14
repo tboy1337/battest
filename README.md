@@ -61,6 +61,7 @@ Then `battest run tests`.
 - [Fixture format](docs/fixture-format.md)
 - [CLI](docs/cli.md)
 - [Mocking external commands](docs/mocking.md)
+- [PATH mock stub crate](docs/stub.md)
 - [GitHub Action](docs/github-action.md)
 - [Encoding](docs/encoding.md)
 - [Safety](docs/safety.md)
@@ -73,6 +74,13 @@ cd battest
 python -m pip install -e ".[dev]"
 python scripts/generate_spec_data.py
 python scripts/verify.py
+```
+
+Rust (PATH-mock stub crate in `stub/`):
+
+```text
+cargo test --manifest-path stub/Cargo.toml --locked --all-targets
+python scripts/build_stub.py
 ```
 
 On Windows, `battest run examples` dogfoods `examples/hello` and

@@ -38,6 +38,7 @@ DISCOVERY_SKIP_DIR_NAMES: frozenset[str] = frozenset(
         "build",
         "dist",
         "htmlcov",
+        "target",
         "vendor",
     }
 )

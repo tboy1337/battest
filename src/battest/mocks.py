@@ -35,8 +35,8 @@ def stub_executable() -> Path:
     path = packaged_data_path("battest_stub.exe")
     if not path.is_file():
         raise MockError(
-            "battest_stub.exe is missing; build it with rustc from "
-            "src/battest/data/battest_stub.rs"
+            "battest_stub.exe is missing; build it with "
+            "python scripts/build_stub.py (requires Rust/cargo)"
         )
     return path
 

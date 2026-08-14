@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -41,6 +42,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-tests", action="store_true")
     args = parser.parse_args(argv)
     python = sys.executable
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        LOGGER.error("cargo is required for stub crate checks")
+        return 2
+    cargo_audit = shutil.which("cargo-audit")
     steps: list[tuple[list[str], bool]] = [
         ([python, "scripts/generate_spec_data.py", "--check"], False),
         (
@@ -49,6 +55,10 @@ def main(argv: list[str] | None = None) -> int:
         ),
         (
             [python, "-m", "isort", "--check-only", "src", "tests", "scripts"],
+            args.skip_format,
+        ),
+        (
+            [cargo, "fmt", "--all", "--check", "--manifest-path", "stub/Cargo.toml"],
             args.skip_format,
         ),
         ([python, "-m", "mypy", "src/battest", "tests", "scripts"], args.skip_lint),
@@ -69,6 +79,20 @@ def main(argv: list[str] | None = None) -> int:
         ),
         (
             [
+                cargo,
+                "clippy",
+                "--manifest-path",
+                "stub/Cargo.toml",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ],
+            args.skip_lint,
+        ),
+        (
+            [
                 python,
                 "-m",
                 "pip_audit",
@@ -79,8 +103,25 @@ def main(argv: list[str] | None = None) -> int:
             ],
             args.skip_audit,
         ),
+        (
+            [cargo, "audit", "--file", "stub/Cargo.lock"],
+            args.skip_audit or cargo_audit is None,
+        ),
         ([python, "-m", "pytest"], args.skip_tests),
+        (
+            [
+                cargo,
+                "test",
+                "--manifest-path",
+                "stub/Cargo.toml",
+                "--locked",
+                "--all-targets",
+            ],
+            args.skip_tests,
+        ),
     ]
+    if cargo_audit is None:
+        LOGGER.info("cargo-audit not on PATH; skipping rust advisory audit")
     for command, skip in steps:
         code = _run(command, skip)
         if code != 0:

@@ -26,6 +26,8 @@ COPYING text eol=lf
 .gitattributes text eol=lf
 .gitmodules text eol=lf
 .github/** text eol=lf
+Cargo.lock text eol=lf
+rust-toolchain.toml text eol=lf
 
 # Windows-native scripts (CRLF in the working tree for cmd.exe)
 *.bat text eol=crlf

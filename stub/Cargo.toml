@@ -1,0 +1,25 @@
+[package]
+name = "battest-stub"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "AGPL-3.0-or-later"
+publish = false
+description = """\
+  PATH-shadow helper copied as <command>.exe for battest external command mocks.\
+  """
+
+[[bin]]
+name = "battest-stub"
+path = "src/main.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"

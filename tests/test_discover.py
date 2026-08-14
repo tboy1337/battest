@@ -98,6 +98,12 @@ def test_iter_skips_vendor(tmp_path: Path) -> None:
         "description: hidden\nexpect:\n  exit_code: 0\n",
         encoding="utf-8",
     )
+    cargo_target = tmp_path / "target" / "debug"
+    cargo_target.mkdir(parents=True)
+    (cargo_target / "hidden.battest.yaml").write_text(
+        "description: cargo-target\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
     found = iter_fixture_files(tmp_path)
     assert found == []
     path = tmp_path / "one.battest.yaml"

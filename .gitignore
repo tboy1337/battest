@@ -93,3 +93,7 @@ $RECYCLE.BIN/
 # Temporary directories
 tmp/
 temp/
+
+# Rust
+stub/target/
+target/

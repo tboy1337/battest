@@ -23,12 +23,14 @@ script that runs `ipconfig` without `CALL` never returns if the shadow is a
 `ipconfig.exit`) supply canned output and the exit code. Each invocation
 appends argv to `_calls/ipconfig.log`.
 
-The stub binary is `src/battest/data/battest_stub.exe`, built from
-`battest_stub.rs`:
+The stub binary is `src/battest/data/battest_stub.exe`, built from the
+`stub/` crate:
 
 ```text
-rustc -O -C debuginfo=0 -o src/battest/data/battest_stub.exe src/battest/data/battest_stub.rs
+python scripts/build_stub.py
 ```
+
+See [PATH mock stub crate](stub.md) for rustfmt, clippy, tests, and coverage.
 
 `expect_calls` with `not_called: true` asserts the stub was never invoked.
 
