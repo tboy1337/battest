@@ -3,7 +3,8 @@ try {
 $binPath = '__BATTEST_BIN__'
 $path = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not $path) { Write-Host 'User PATH is empty'; exit 0 }
-if ($path -like "*$binPath*") {
+$segments = $path -split ';' | Where-Object { $_ -ne '' }
+if ($segments -contains $binPath) {
 $pathArray = $path -split ';' | Where-Object { $_ -ne '' -and $_ -ne $binPath }
 $newPath = $pathArray -join ';'
 [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')

@@ -217,6 +217,24 @@ def test_match_output_equals_file_rejects_absolute(tmp_path: Path) -> None:
     )
     assert failures
     assert "escapes" in failures[0].message
+    drive_relative = match_output(
+        "stdout",
+        OutputMatcher(equals_file="C:foo"),
+        "abc\n",
+        tmp_path,
+        200,
+    )
+    assert drive_relative
+    assert "escapes" in drive_relative[0].message
+    unc = match_output(
+        "stdout",
+        OutputMatcher(equals_file="\\\\server\\share\\out.txt"),
+        "abc\n",
+        tmp_path,
+        200,
+    )
+    assert unc
+    assert "escapes" in unc[0].message
 
 
 def test_invalid_regex_is_rejected_at_model() -> None:
@@ -229,6 +247,13 @@ def test_nested_quantifier_regex_is_rejected_at_model() -> None:
         OutputMatcher(regex="(a+)+")
     with pytest.raises(ValueError, match="nested quantifiers"):
         OutputMatcher(regex="(a*)*")
+
+
+def test_quantified_alternation_regex_is_rejected_at_model() -> None:
+    with pytest.raises(ValueError, match="quantified alternation"):
+        OutputMatcher(regex="(a|a)*")
+    with pytest.raises(ValueError, match="quantified alternation"):
+        OutputMatcher(regex="(a|aa)+")
 
 
 def test_regex_pattern_length_is_capped() -> None:

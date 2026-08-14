@@ -18,6 +18,7 @@ from battest.models import (
     MockSpec,
     NewlineMode,
     OutputMatcher,
+    is_rooted_path,
 )
 
 LOGGER = get_logger("assertlib")
@@ -70,8 +71,8 @@ def newline_requirement_failure(actual: str, mode: NewlineMode) -> str | None:
 
 def confined_source_path(source_dir: Path, relative: str) -> Path | None:
     """Return source_dir/relative when it stays inside source_dir, else None."""
-    if Path(relative).is_absolute():
-        LOGGER.warning("path %s is absolute; rejected", relative)
+    if is_rooted_path(relative):
+        LOGGER.warning("path %s is rooted; rejected", relative)
         return None
     return confined_work_path(source_dir, relative)
 

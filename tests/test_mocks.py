@@ -98,9 +98,9 @@ def test_write_mock_tree_without_call_recording(tmp_path: Path) -> None:
     assert not (mock_dir / "_calls" / "net.log").exists()
 
 
-def test_write_mock_tree_skips_internals(tmp_path: Path) -> None:
-    mock_dir = write_mock_tree(tmp_path, {"del": MockSpec(exit_code=0)})
-    assert not (mock_dir / "del.exe").exists()
+def test_write_mock_tree_rejects_internals(tmp_path: Path) -> None:
+    with pytest.raises(MockError, match="internal"):
+        write_mock_tree(tmp_path, {"del": MockSpec(exit_code=0)})
 
 
 def test_write_mock_tree_rejects_escaping_and_reserved_names(tmp_path: Path) -> None:

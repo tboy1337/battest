@@ -41,10 +41,23 @@ def _read_project_version(pyproject_path: Path) -> str:
 
 def _version_tuple(version: str) -> tuple[int, int, int]:
     """Convert a semantic version string to major/minor/patch integers."""
-    parts = version.split(".")
-    while len(parts) < 3:
-        parts.append("0")
-    return int(parts[0]), int(parts[1]), int(parts[2])
+    numeric: list[int] = []
+    for part in version.split("."):
+        digits = ""
+        for char in part:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            break
+        numeric.append(int(digits))
+        if len(numeric) == 3:
+            break
+    if not numeric:
+        raise ValueError(f"cannot parse version {version!r}")
+    while len(numeric) < 3:
+        numeric.append(0)
+    return numeric[0], numeric[1], numeric[2]
 
 
 def _build_version_info(version: str) -> str:

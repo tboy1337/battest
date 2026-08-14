@@ -114,8 +114,10 @@ def write_mock_tree(root: Path, mocks: dict[str, MockSpec]) -> Path:
         except ValueError as exc:
             raise MockError(str(exc)) from exc
         if catalog.is_internal(lowered):
-            LOGGER.warning("refusing to PATH-mock internal command %s", lowered)
-            continue
+            LOGGER.error("refusing to PATH-mock internal command %s", lowered)
+            raise MockError(
+                f"command '{lowered}' is a cmd.exe internal and cannot be PATH-mocked"
+            )
         stub_path = _confined_mock_path(mock_dir, lowered, f"{lowered}.exe")
         shutil.copyfile(source_exe, stub_path)
         _confined_mock_path(mock_dir, lowered, f"{lowered}.exit").write_text(

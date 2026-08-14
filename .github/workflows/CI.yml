@@ -117,6 +117,9 @@ jobs:
       - name: Copy spec catalogs
         run: python scripts/generate_spec_data.py
 
+      - name: Run example suites with committed stub
+        run: python -m battest run examples --safe-defaults
+
       - name: Rebuild PATH-mock stub
         run: python scripts/build_stub.py
 
@@ -126,7 +129,7 @@ jobs:
       - name: Check line, branch, function, and class coverage
         run: python scripts/check_coverage.py
 
-      - name: Run example suites
+      - name: Run example suites with rebuilt stub
         run: python -m battest run examples --safe-defaults
 
   action-windows:
@@ -413,7 +416,7 @@ jobs:
       - name: Read version from pyproject.toml
         id: version
         run: |
-          VERSION=$(python -c "import pathlib; p=pathlib.Path('pyproject.toml'); print(next(l.split('=',1)[1].strip().strip('\"').strip(\"'\") for l in p.read_text().splitlines() if l.strip().startswith('version = ')))")
+          VERSION=$(python -c "import pathlib, tomllib; print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Project version: $VERSION"
 
@@ -427,15 +430,16 @@ jobs:
           fi
 
           OLD_VERSION=$(python -c "
-          import pathlib, subprocess, sys
-          text = subprocess.check_output(['git', 'show', 'HEAD^:pyproject.toml'], text=True)
-          for line in text.splitlines():
-              stripped = line.strip()
-              if stripped.startswith('version = '):
-                  print(stripped.split('=', 1)[1].strip().strip('\"').strip(\"'\"))
-                  break
-          else:
+          import subprocess, sys, tomllib
+          text = subprocess.check_output(['git', 'show', 'HEAD^:pyproject.toml'])
+          loaded = tomllib.loads(text)
+          project = loaded.get('project')
+          if not isinstance(project, dict):
               sys.exit('Could not read previous version from pyproject.toml')
+          value = project.get('version')
+          if not isinstance(value, str) or not value.strip():
+              sys.exit('Could not read previous version from pyproject.toml')
+          print(value.strip())
           ")
           NEW_VERSION="${{ steps.version.outputs.version }}"
           if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
@@ -549,7 +553,7 @@ jobs:
           path: dist/
 
   create-release:
-    needs: [check-version, build-windows]
+    needs: [check-version, build-windows, build-wheels]
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -585,8 +589,8 @@ jobs:
 
   publish-pypi:
     name: Publish wheels to PyPI
-    needs: [check-version, build-wheels]
-    if: needs.check-version.outputs.should_release == 'true'
+    needs: [create-release]
+    if: needs.create-release.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -612,4 +616,4 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_BATTEST }}
         run: |
           twine check dist/*
-          twine upload dist/*
+          twine upload --skip-existing dist/*

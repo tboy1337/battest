@@ -35,7 +35,10 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 63,
-      "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,61}[a-z0-9])?$"
+      "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,61}[a-z0-9])?$",
+      "not": {
+        "pattern": "^(con|prn|aux|nul|com[1-9]|lpt[1-9])$"
+      }
     },
     "newlineMode": { "type": "string", "enum": ["auto", "crlf", "lf"] },
     "outputMatcher": {
@@ -45,7 +48,7 @@
         "equals": { "type": "string" },
         "equals_file": { "type": "string", "minLength": 1 },
         "contains": { "type": "string", "minLength": 1 },
-        "regex": { "type": "string" },
+        "regex": { "type": "string", "maxLength": 512 },
         "empty": { "type": "boolean" },
         "newline": { "$ref": "#/$defs/newlineMode" }
       }
@@ -55,7 +58,11 @@
       "additionalProperties": false,
       "required": ["path"],
       "properties": {
-        "path": { "type": "string", "minLength": 1 },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?![\\\\/]).+$"
+        },
         "exists": { "type": "boolean" },
         "not_exists": { "type": "boolean" },
         "contains": { "type": "string", "minLength": 1 },

@@ -509,6 +509,14 @@ def test_ci_windows_pytest_rebuilds_stub_without_pe_byte_match() -> None:
         if isinstance(step, dict) and step.get("name") == "Rebuild PATH-mock stub"
     )
     assert "build_stub.py" in str(rebuild.get("run"))
+    names = [
+        step.get("name") for step in steps if isinstance(step, dict) and "name" in step
+    ]
+    assert names.index("Run example suites with committed stub") < names.index(
+        "Rebuild PATH-mock stub"
+    )
+    assert names.index("Rebuild PATH-mock stub") < names.index("Run full tests")
+    assert "Run example suites with rebuilt stub" in names
     drift_steps = [
         step
         for step in steps
@@ -563,6 +571,36 @@ def test_ci_retries_release_when_version_tag_is_missing() -> None:
     assert "tag v${NEW_VERSION} is missing; releasing." in script
     assert "should_release=true" in script
     assert "should_release=false" in script
+    assert "tomllib.loads" in script
+    version_step = next(
+        step
+        for step in check_version["steps"]
+        if isinstance(step, dict) and step.get("id") == "version"
+    )
+    assert "tomllib" in str(version_step.get("run"))
+
+
+def test_ci_release_jobs_are_atomic() -> None:
+    workflow = _load_ci_workflow()
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    create_release = jobs["create-release"]
+    publish_pypi = jobs["publish-pypi"]
+    assert isinstance(create_release, dict)
+    assert isinstance(publish_pypi, dict)
+    assert create_release["needs"] == [
+        "check-version",
+        "build-windows",
+        "build-wheels",
+    ]
+    assert publish_pypi["needs"] == ["create-release"]
+    assert publish_pypi["if"] == "needs.create-release.result == 'success'"
+    twine = next(
+        step
+        for step in publish_pypi["steps"]
+        if isinstance(step, dict) and step.get("name") == "Publish to PyPI"
+    )
+    assert "twine upload --skip-existing" in str(twine.get("run"))
 
 
 def test_ci_cancels_in_progress_pull_requests_only() -> None:
@@ -586,3 +624,18 @@ def test_github_actions_are_not_pinned_to_shas() -> None:
         text = path.read_text(encoding="utf-8")
         match = sha_uses.search(text)
         assert match is None, f"{path} pins an action to a commit SHA: {match.group(0)}"
+
+
+def test_examples_load() -> None:
+    cases = load_case(_repo_root() / "examples")
+    ids = {case.case_id for case in cases}
+    assert "hello" in ids
+    assert "windowsrescue/flush_dns" in ids
+
+
+@pytest.mark.windows
+def test_examples_run() -> None:
+    cases = load_case(_repo_root() / "examples")
+    results = run_cases(cases, safe_defaults=True, jobs=1)
+    assert results
+    assert all(result.outcome == Outcome.PASS for result in results)

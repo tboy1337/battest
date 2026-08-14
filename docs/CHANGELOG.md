@@ -5,6 +5,28 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-15
+
+Production audit: confinement, mock fail-closed, installer, and release gating.
+
+- PATH-mocking a cmd.exe internal is a `MockError` at stub write time, not a
+  silent skip, so the Python API cannot run the real internal.
+- Fixture `script`, `setup`, `teardown`, `copy`, and `equals_file` paths reject
+  drive-relative and other rooted values (`C:foo`, UNC), not only
+  `Path.is_absolute()`.
+- Fixture `regex` also rejects quantified alternation such as `(a|a)*`. Nested
+  quantifiers and the 512-character cap remain.
+- Uninstaller uses delayed `errorlevel` after `rmdir`, exits `1` when removal
+  fails, kills only `%LOCALAPPDATA%\Programs\battest\bin\battest.exe`, and
+  matches PATH entries by exact segment.
+- CI reads `[project].version` with `tomllib`, dogfoods examples against the
+  committed stub before rebuilding it, creates the GitHub Release only after
+  wheels exist, then publishes to PyPI with `twine --skip-existing`.
+- JSON Schema rejects reserved device stems, caps `regex` length, and rejects
+  rooted file matcher paths. Editors still require lowercase command names.
+- CI and Action docs continue to pin GitHub Actions to version tags, not commit
+  SHAs.
+
 ## [1.0.1] - 2026-08-15
 
 Production audit fixes for release metadata, CI, and fixture loading.
@@ -48,5 +70,6 @@ Rust stub helper.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
+[1.0.2]: https://github.com/tboy1337/battest/releases/tag/v1.0.2
 [1.0.1]: https://github.com/tboy1337/battest/releases/tag/v1.0.1
 [1.0.0]: https://github.com/tboy1337/battest/releases/tag/v1.0.0

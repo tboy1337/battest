@@ -163,6 +163,10 @@ def test_version_tuple_pads_short_versions() -> None:
     assert module._version_tuple("1") == (1, 0, 0)
     assert module._version_tuple("1.2") == (1, 2, 0)
     assert module._version_tuple("1.2.3") == (1, 2, 3)
+    assert module._version_tuple("1.0.2.post1") == (1, 0, 2)
+    assert module._version_tuple("1.0.2rc1") == (1, 0, 2)
+    with pytest.raises(ValueError, match="cannot parse"):
+        module._version_tuple("rc1")
 
 
 def test_build_version_info_includes_pyproject_version() -> None:
