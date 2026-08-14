@@ -8,9 +8,11 @@ from pydantic import ValidationError
 import pytest
 
 from battest.models import (
+    CallExpectation,
     CaseDocument,
     EngineConfig,
     Expect,
+    FileMatcher,
     MockSpec,
     OutputMatcher,
     merge_expect,
@@ -657,8 +659,64 @@ def test_schema_payload_call_expectation_requires_constraint() -> None:
     payload = schema_payload()
     call_schema = payload["$defs"]["callExpectation"]
     assert "anyOf" in call_schema
+    assert call_schema["properties"]["not_called"] == {"const": True}
     file_schema = payload["$defs"]["fileMatcher"]
     assert "not" in file_schema
+    assert "anyOf" in file_schema
+    mock_schema = payload["$defs"]["mockSpec"]
+    assert "if" in mock_schema
+    assert "then" in mock_schema
+
+
+def test_call_expectation_rejects_not_called_false() -> None:
+    with pytest.raises(ValidationError, match="not_called"):
+        CallExpectation(not_called=False)
+    with pytest.raises(SchemaError, match="not_called"):
+        parse_document(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "mocks": {
+                    "net": {"expect_calls": [{"not_called": False}]},
+                },
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_mock_spec_rejects_expect_calls_without_recording() -> None:
+    with pytest.raises(ValidationError, match="record_calls"):
+        MockSpec(
+            record_calls=False,
+            expect_calls=[CallExpectation(not_called=True)],
+        )
+    with pytest.raises(SchemaError, match="record_calls"):
+        parse_document(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "mocks": {
+                    "net": {
+                        "record_calls": False,
+                        "expect_calls": [{"not_called": True}],
+                    }
+                },
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_file_matcher_requires_constraint() -> None:
+    with pytest.raises(ValidationError, match="exists"):
+        FileMatcher(path="out.txt")
+    with pytest.raises(SchemaError):
+        parse_document(
+            {
+                "description": "t",
+                "expect": {"files": [{"path": "out.txt"}]},
+            },
+            Path("doc.yaml"),
+        )
 
 
 def test_engine_config_max_diff_must_be_positive() -> None:

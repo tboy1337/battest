@@ -49,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
@@ -105,6 +105,9 @@ jobs:
 
       - name: Rebuild PATH-mock stub
         run: python scripts/build_stub.py
+
+      - name: Fail if packaged stub PE drifted
+        run: git diff --exit-code -- src/battest/data/battest_stub.exe
 
       - name: Run full tests
         run: python -m pytest

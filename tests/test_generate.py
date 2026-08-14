@@ -302,6 +302,33 @@ def test_rust_coverage_gate_errors(tmp_path: Path) -> None:
     assert overall.line == 90.0
 
 
+def test_rust_coverage_overall_uses_stub_src_not_totals(tmp_path: Path) -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+    stub = _llvm_summary(lines=(9, 10), functions=(9, 10), regions=(9, 10))
+    tests = _llvm_summary(lines=(0, 100), functions=(0, 10), regions=(0, 100))
+    inflated = _llvm_summary(lines=(9, 110), functions=(9, 20), regions=(9, 110))
+    report = tmp_path / "cov.json"
+    report.write_text(
+        json.dumps(
+            _llvm_json(
+                summary=stub,
+                extra_files=[
+                    {
+                        "filename": str(Path("repo") / "stub" / "tests" / "cli.rs"),
+                        "summary": tests,
+                    }
+                ],
+                totals=inflated,
+            )
+        ),
+        encoding="utf-8",
+    )
+    overall, files = module.measure(report)
+    assert overall.line == 90.0
+    assert files
+    assert all("src" in name.replace("\\", "/") for name in files)
+
+
 def test_rust_coverage_collect_report_requires_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

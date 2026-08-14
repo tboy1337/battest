@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+import tomllib
 
 __author__ = "tboy1337"
 __license__ = "AGPL-3.0-or-later"
@@ -21,10 +22,16 @@ def _fallback_version() -> str:
     pyproject = _pyproject_path()
     if not pyproject.is_file():
         return "unknown"
-    for line in pyproject.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("version = "):
-            return stripped.split("=", 1)[1].strip().strip('"').strip("'")
+    try:
+        loaded = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return "unknown"
+    project = loaded.get("project")
+    if not isinstance(project, dict):
+        return "unknown"
+    value = project.get("version")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
     return "unknown"
 
 

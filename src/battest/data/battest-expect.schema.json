@@ -55,6 +55,13 @@
         "equals": { "type": "string" },
         "equals_file": { "type": "string", "minLength": 1 }
       },
+      "anyOf": [
+        { "required": ["exists"] },
+        { "required": ["not_exists"] },
+        { "required": ["contains"] },
+        { "required": ["equals"] },
+        { "required": ["equals_file"] }
+      ],
       "not": {
         "required": ["exists", "not_exists"],
         "properties": {
@@ -93,7 +100,7 @@
       "additionalProperties": false,
       "properties": {
         "args_contains": { "type": "string" },
-        "not_called": { "type": "boolean" }
+        "not_called": { "const": true }
       },
       "anyOf": [
         { "required": ["args_contains"] },
@@ -111,6 +118,18 @@
         "expect_calls": {
           "type": "array",
           "items": { "$ref": "#/$defs/callExpectation" }
+        }
+      },
+      "if": {
+        "properties": {
+          "expect_calls": { "type": "array", "minItems": 1 }
+        },
+        "required": ["expect_calls"]
+      },
+      "then": {
+        "not": {
+          "properties": { "record_calls": { "const": false } },
+          "required": ["record_calls"]
         }
       }
     },

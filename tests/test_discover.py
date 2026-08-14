@@ -171,3 +171,60 @@ def test_iter_skips_when_root_itself_is_vendor(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert iter_fixture_files(vendor) == []
+
+
+def test_iter_fixture_files_logs_walk_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "keep.battest.yaml").write_text(
+        "description: keep\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    original = Path.walk
+
+    def wrapping_walk(
+        self: Path,
+        top_down: bool = True,
+        on_error: object = None,
+        follow_symlinks: bool = False,
+    ) -> object:
+        if callable(on_error):
+            on_error(PermissionError("locked-dir"))
+        return original(
+            self,
+            top_down=top_down,
+            on_error=on_error,
+            follow_symlinks=follow_symlinks,
+        )
+
+    monkeypatch.setattr(Path, "walk", wrapping_walk)
+    with caplog.at_level("WARNING", logger="battest.discover"):
+        found = iter_fixture_files(tmp_path)
+    assert any(path.name == "keep.battest.yaml" for path in found)
+    assert "locked-dir" in caplog.text
+
+
+def test_iter_fixture_files_walk_oserror_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def boom_walk(self: Path, **_kwargs: object) -> object:
+        raise OSError("cannot walk")
+
+    monkeypatch.setattr(Path, "walk", boom_walk)
+    with caplog.at_level("ERROR", logger="battest.discover"):
+        assert iter_fixture_files(tmp_path) == []
+    assert "cannot walk" in caplog.text
+
+
+def test_iter_fixture_files_walk_iteration_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def flaky_walk(self: Path, **_kwargs: object) -> object:
+        yield self, [], ["keep.battest.yaml"]
+        raise OSError("mid-walk")
+
+    monkeypatch.setattr(Path, "walk", flaky_walk)
+    with caplog.at_level("ERROR", logger="battest.discover"):
+        found = iter_fixture_files(tmp_path)
+    assert any(path.name == "keep.battest.yaml" for path in found)
+    assert "mid-walk" in caplog.text

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+import threading
 from typing import Mapping
 
 import yaml
@@ -17,6 +18,7 @@ from battest.logging_config import get_logger
 
 LOGGER = get_logger("spec")
 _TILDE_RE = re.compile(PERCENT_TILDE_PATTERN, re.IGNORECASE)
+_EXTRACT_LOCK = threading.Lock()
 _EXTRACT_ROOT: tempfile.TemporaryDirectory[str] | None = None
 _EXTRACTED: dict[str, Path] = {}
 
@@ -116,28 +118,29 @@ def packaged_data_path(name: str) -> Path:
     if adjacent.is_file():
         LOGGER.debug("packaged data adjacent path=%s", adjacent)
         return adjacent
-    cached = _EXTRACTED.get(name)
-    if cached is not None and cached.is_file():
-        LOGGER.debug("packaged data cached path=%s", cached)
-        return cached
-    traversable = resources.files("battest") / "data" / name
-    with resources.as_file(traversable) as path:
-        source = Path(path)
-        # Process-lifetime extract dir so zip/egg installs keep a real path.
-        global _EXTRACT_ROOT  # pylint: disable=global-statement
-        if _EXTRACT_ROOT is None:
-            # Kept for process lifetime; closing would delete extracted files.
-            _EXTRACT_ROOT = (
-                tempfile.TemporaryDirectory(  # pylint: disable=consider-using-with
-                    prefix="battest-data-"
+    with _EXTRACT_LOCK:
+        cached = _EXTRACTED.get(name)
+        if cached is not None and cached.is_file():
+            LOGGER.debug("packaged data cached path=%s", cached)
+            return cached
+        traversable = resources.files("battest") / "data" / name
+        with resources.as_file(traversable) as path:
+            source = Path(path)
+            # Process-lifetime extract dir so zip/egg installs keep a real path.
+            global _EXTRACT_ROOT  # pylint: disable=global-statement
+            if _EXTRACT_ROOT is None:
+                # Kept for process lifetime; closing would delete extracted files.
+                _EXTRACT_ROOT = (
+                    tempfile.TemporaryDirectory(  # pylint: disable=consider-using-with
+                        prefix="battest-data-"
+                    )
                 )
-            )
-        destination = Path(_EXTRACT_ROOT.name) / name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, destination)
-        _EXTRACTED[name] = destination
-        LOGGER.debug("packaged data extracted path=%s", destination)
-        return destination
+            destination = Path(_EXTRACT_ROOT.name) / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+            _EXTRACTED[name] = destination
+            LOGGER.debug("packaged data extracted path=%s", destination)
+            return destination
 
 
 @lru_cache(maxsize=1)

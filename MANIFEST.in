@@ -1,3 +1,9 @@
-# Top-level JSON Schema is not package data; setuptools has no pyproject.toml
-# equivalent for extra sdist files outside the package directory.
+# Extra sdist files outside the Python package directory.
+# The wheel stays lean (package data only); the sdist carries Corresponding
+# Source for the AGPL-licensed PATH-mock stub PE and the docs README links to.
 include schema/*.json
+include rust-toolchain.toml
+include scripts/build_stub.py
+include docs/*.md
+graft stub
+prune stub/target

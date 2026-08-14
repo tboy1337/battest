@@ -1,0 +1,23 @@
+[MAIN]
+py-version=3.12
+jobs=0
+ignore=vendor
+source-roots=src
+
+[MESSAGES CONTROL]
+# too-few-public-methods: pydantic models and small typed containers are valid.
+disable=too-few-public-methods
+
+[FORMAT]
+max-line-length=88
+
+[DESIGN]
+max-args=10
+max-attributes=25
+max-locals=20
+max-returns=8
+max-branches=15
+max-statements=60
+
+[BASIC]
+good-names=i,j,k,ex,id,fd,e,f,n,ok

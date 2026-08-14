@@ -37,11 +37,14 @@ See [PATH mock stub crate](stub.md) for rustfmt, cargo check, clippy, tests,
 and coverage.
 
 `expect_calls` with `not_called: true` asserts the stub was never invoked.
-Each `expect_calls` entry must set `args_contains` or `not_called`.
+Each `expect_calls` entry must set `args_contains` or `not_called: true`.
+`not_called: false` is rejected. `expect_calls` requires `record_calls: true`
+(the default); a fixture that sets `record_calls: false` together with
+`expect_calls` is a schema error.
 
 Set `record_calls: false` to skip creating `_calls/<command>.log`. The stub
 appends argv only when that log file already exists, so call recording stays
-off.
+off. Do not combine that with `expect_calls`.
 
 ## Safe defaults
 
@@ -63,6 +66,7 @@ command under `allow:`.
 
 ## Internals
 
-Relative `del out.txt` only affects the isolated working directory. An internal
+Relative `del out.txt` only affects the isolated working directory. Scripts
+that write via `%~dp0` also stay inside that workdir copy. An internal
 used with an absolute path (`del C:\Windows\...`) cannot be mocked; battest
 emits a warning. Run those cases in a disposable VM.

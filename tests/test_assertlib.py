@@ -227,6 +227,35 @@ def test_match_output_equals_file_missing_is_failure(tmp_path: Path) -> None:
     assert "missing-golden.txt" in failures[0].message
 
 
+def test_match_output_equals_file_invalid_utf8_is_failure(tmp_path: Path) -> None:
+    golden = tmp_path / "expected.txt"
+    golden.write_bytes(b"\xff\xfe not utf-8")
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals_file="expected.txt"),
+        "hello\n",
+        tmp_path,
+        200,
+    )
+    assert len(failures) == 1
+    assert (
+        "unreadable" in failures[0].message.lower()
+        or "utf" in failures[0].message.lower()
+    )
+
+
+def test_match_output_regex_does_not_normalize_pattern() -> None:
+    failures = match_output(
+        "stdout",
+        OutputMatcher(regex="foo\rbar", newline=NewlineMode.AUTO),
+        "foo\nbar",
+        Path("."),
+        200,
+    )
+    assert failures
+    assert "did not match regex" in failures[0].message
+
+
 def test_match_exit_code() -> None:
     assert match_exit_code(0, 0) == []
     assert match_exit_code(0, 1)
@@ -380,6 +409,8 @@ def test_match_mock_calls() -> None:
     assert match_mock_calls(unused, {"net": ["session"]})
     with pytest.raises(ValueError, match="args_contains or not_called"):
         CallExpectation()
+    with pytest.raises(ValueError, match="not_called"):
+        CallExpectation(not_called=False)
 
 
 def test_match_mock_calls_whitespace_only_line_counts_as_call() -> None:

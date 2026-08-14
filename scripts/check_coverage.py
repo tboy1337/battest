@@ -70,6 +70,10 @@ def ratio_percent(covered: int, total: int) -> float:
 
 
 def _region_hit(region: RegionReport) -> bool:
+    """Return True when a named function or class was entered (any covered line).
+
+    This is dead-code detection, not a substitute for line coverage of the body.
+    """
     statements = region.summary.num_statements
     if statements <= 0:
         return True

@@ -129,17 +129,25 @@ pub fn run_with(
 ) -> u8 {
     let context = stub_context(exe);
     let log_path = call_log_path(&context.directory, &context.stem);
-    if log_path.is_file() {
-        let _ = append_args(&log_path, args);
+    if log_path.is_file() && append_args(&log_path, args).is_err() {
+        return 1;
     }
-    let _ = pipe_file(
+    if pipe_file(
         &sidecar(&context.directory, &context.stem, "stdout"),
         stdout,
-    );
-    let _ = pipe_file(
+    )
+    .is_err()
+    {
+        return 1;
+    }
+    if pipe_file(
         &sidecar(&context.directory, &context.stem, "stderr"),
         stderr,
-    );
+    )
+    .is_err()
+    {
+        return 1;
+    }
     read_exit_code(&sidecar(&context.directory, &context.stem, "exit"))
 }
 
@@ -374,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn run_with_sidecars_log_and_ignored_errors() {
+    fn run_with_sidecars_log_and_io_errors() {
         let dir = make_temp_dir();
         let exe = dir.join("tool.exe");
         fs::write(dir.join("tool.stdout"), b"out").expect("stdout");
@@ -408,13 +416,13 @@ mod tests {
         fs::create_dir_all(call_log_path(&dir, "broken")).expect("log path is dir");
         let mut ignored_out = Vec::new();
         let mut ignored_err = Vec::new();
-        let ignored = run_with(
+        let failed = run_with(
             &dir.join("broken.exe"),
             &["y".to_owned()],
             &mut ignored_out,
             &mut ignored_err,
         );
-        assert_eq!(ignored, 0);
+        assert_eq!(failed, 1);
         remove_temp_dir(&dir);
     }
 

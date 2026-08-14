@@ -84,6 +84,9 @@ def _read_equals_file(source_dir: Path, relative: str) -> tuple[str | None, str 
     except FileNotFoundError:
         LOGGER.error("equals_file missing %s", path)
         return None, f"equals_file not found: {relative}"
+    except UnicodeDecodeError as exc:
+        LOGGER.error("equals_file is not utf-8 %s: %s", path, exc)
+        return None, f"equals_file unreadable: {relative} (not valid utf-8: {exc})"
     except OSError as exc:
         LOGGER.error("equals_file unreadable %s: %s", path, exc)
         return None, f"equals_file unreadable: {relative} ({exc})"
@@ -192,7 +195,7 @@ def match_output(
                 )
             )
     if matcher.regex is not None:
-        pattern = apply_newline_mode(matcher.regex, matcher.newline)
+        pattern = matcher.regex
         try:
             matched = re.search(pattern, actual_cmp, re.MULTILINE)
         except re.error as exc:

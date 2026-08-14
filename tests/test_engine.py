@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -12,6 +13,7 @@ from battest.encoding import console_encoding, decode_output
 from battest.engine import (
     EngineError,
     _combined_env,
+    _prepare_work_dir,
     _run_process,
     _script_warnings,
     _seed_work_dir,
@@ -22,6 +24,7 @@ from battest.engine import (
     execute_case,
     execute_cases,
     kill_process_tree,
+    remaining_timeout,
     require_windows,
     resolved_timeout,
 )
@@ -201,6 +204,7 @@ def test_resolved_timeout_uses_config_when_case_omits(tmp_path: Path) -> None:
     assert resolved_timeout(omitted, config) == 1.5
     explicit = omitted.model_copy(update={"timeout_seconds": 12.0})
     assert resolved_timeout(explicit, config) == 12.0
+    assert remaining_timeout(time.perf_counter() - 5.0) == 0.0
 
 
 def test_combined_env_prefixes_mock_and_collapses_path(
@@ -495,6 +499,28 @@ def test_engine_timeout(tmp_path: Path) -> None:
 
 
 @pytest.mark.windows
+def test_engine_dp0_write_stays_in_workdir(tmp_path: Path) -> None:
+    case = _write_case(
+        tmp_path,
+        '@echo off\r\necho leaked> "%~dp0leaked.txt"\r\nexit /b 0\r\n',
+        "\n".join(
+            [
+                "description: dp0 isolation",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "  files:",
+                "    - path: leaked.txt",
+                "      exists: true",
+            ]
+        ),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.PASS, result.failures
+    assert not (tmp_path / "leaked.txt").exists()
+
+
+@pytest.mark.windows
 def test_engine_path_mock(tmp_path: Path) -> None:
     case = _write_case(
         tmp_path,
@@ -680,6 +706,33 @@ def test_seed_work_dir_preserves_relative_layout(tmp_path: Path) -> None:
     work.mkdir()
     _seed_work_dir(work, [nested / "seed.txt"], base)
     assert (work / "fixtures" / "seed.txt").read_text(encoding="utf-8") == "seeded"
+
+
+def test_prepare_work_dir_copies_script_setup_teardown(tmp_path: Path) -> None:
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    setup = tmp_path / "setup.cmd"
+    setup.write_text("@echo off\n", encoding="utf-8")
+    teardown = tmp_path / "teardown.cmd"
+    teardown.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        setup_path=setup,
+        teardown_path=teardown,
+        expect=Expect(exit_code=0),
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    prepared = _prepare_work_dir(case, EngineConfig(), work)
+    copied_script = work / "run.cmd"
+    assert copied_script.is_file()
+    assert copied_script.resolve() != script.resolve()
+    assert prepared.env["BATTEST_SUT"] == str(copied_script)
+    assert (work / "setup.cmd").is_file()
+    assert (work / "teardown.cmd").is_file()
 
 
 def test_drain_after_timeout_kills_when_communicate_hangs() -> None:
@@ -1057,3 +1110,46 @@ def test_execute_case_setup_timeout_and_env_dump(
     assert timed.outcome == Outcome.TIMEOUT
     assert timed.env["FOO"] == "bar"
     assert "BATTEST_X" not in timed.env
+
+
+def test_setup_sut_teardown_share_one_deadline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    setup = tmp_path / "setup.cmd"
+    setup.write_text("@echo off\n", encoding="utf-8")
+    teardown = tmp_path / "teardown.cmd"
+    teardown.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        setup_path=setup,
+        teardown_path=teardown,
+        expect=Expect(exit_code=0),
+    )
+    seen: list[float] = []
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        timeout: float,
+        _encoding: str,
+    ) -> tuple[int, str, str, bool]:
+        seen.append(timeout)
+        time.sleep(0.15)
+        return 0, "", "", False
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    result = execute_case(case, EngineConfig(default_timeout_seconds=5.0))
+    assert result.outcome == Outcome.PASS
+    assert len(seen) == 3
+    assert seen[0] <= 5.0
+    assert seen[1] < seen[0]
+    assert seen[2] < seen[1]

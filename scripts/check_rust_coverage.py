@@ -102,6 +102,35 @@ def percents_for_summary(summary: CoverageSummary) -> MetricPercents:
     )
 
 
+def _add_count(left: CountPercent, right: CountPercent) -> CountPercent:
+    count = left.count + right.count
+    covered = left.covered + right.covered
+    return CountPercent(
+        count=count,
+        covered=covered,
+        percent=ratio_percent(covered, count),
+        notcovered=max(count - covered, 0),
+    )
+
+
+def _sum_summaries(summaries: list[CoverageSummary]) -> CoverageSummary:
+    lines = CountPercent(count=0, covered=0)
+    functions = CountPercent(count=0, covered=0)
+    regions = CountPercent(count=0, covered=0)
+    branches = CountPercent(count=0, covered=0)
+    for summary in summaries:
+        lines = _add_count(lines, summary.lines)
+        functions = _add_count(functions, summary.functions)
+        regions = _add_count(regions, summary.regions)
+        branches = _add_count(branches, summary.branches)
+    return CoverageSummary(
+        lines=lines,
+        functions=functions,
+        regions=regions,
+        branches=branches,
+    )
+
+
 def is_stub_source(filename: str) -> bool:
     """Return True when `filename` is production source under stub/src."""
     parts = Path(filename).parts
@@ -129,12 +158,17 @@ def measure(path: Path) -> tuple[MetricPercents, dict[str, MetricPercents]]:
         raise ValueError("llvm-cov JSON has no data entries")
     payload = report.data[0]
     files: dict[str, MetricPercents] = {}
+    stub_summaries: list[CoverageSummary] = []
     for entry in payload.files:
         if not is_stub_source(entry.filename):
             LOGGER.debug("skipping non-source %s", entry.filename)
             continue
         files[entry.filename] = percents_for_summary(entry.summary)
-    overall = percents_for_summary(payload.totals)
+        stub_summaries.append(entry.summary)
+    if stub_summaries:
+        overall = percents_for_summary(_sum_summaries(stub_summaries))
+    else:
+        overall = percents_for_summary(payload.totals)
     if payload.totals.branches.count <= 0:
         LOGGER.info(
             "LLVM branch counters are empty; using region coverage as the branch metric"

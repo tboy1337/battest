@@ -5,13 +5,18 @@ harm the machine.
 
 Mitigations that **are** included:
 
-- Isolated temporary working directory per case
+- Isolated temporary working directory per case. `script`, `setup`, and
+  `teardown` are copied into that directory, so `%~dp0` resolves to the copy
+  rather than the fixture tree. Extra sibling files still need `copy:`.
 - `cmd.exe /d` so AutoRun is disabled
 - Fixture `script`, `setup`, `teardown`, `copy`, and `equals_file` paths must
   stay under the fixture directory
 - Optional `--safe-defaults` PATH stubs for `format`, `shutdown`, `reg`,
-  `diskpart`, `bcdedit`, `cipher`, `netsh`, `takeown`, and `wmic`
-- Timeouts that kill the process tree (`taskkill /T`)
+  `diskpart`, `bcdedit`, `cipher`, `netsh`, `takeown`, and `wmic`. This is a
+  deny list of common destructive externals, not a sandbox. The CLI default is
+  off; the GitHub Action default is on.
+- A single wall-clock timeout shared across setup, the script under test, and
+  teardown (`taskkill /T` on expiry)
 - Warnings for cmd internals used with absolute paths
 
 Mitigations that **are not** included:

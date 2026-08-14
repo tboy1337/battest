@@ -33,7 +33,11 @@ function, and region coverage are each at least 90% overall and per file under
 coverage as the branch metric. Install the collector with
 `cargo install cargo-llvm-cov`.
 
-Each logged line is a JSON array of argv strings. Rebuild the packaged Windows stub after changing the crate (Windows only copies the PE into package data):
+Each logged line is a JSON array of argv strings. Missing sidecar files still
+mean empty stdout/stderr and exit `0`. If a sidecar or call log exists but
+cannot be read or written, the stub exits `1` instead of swallowing the error.
+Rebuild the packaged Windows stub after changing the crate (Windows only copies
+the PE into package data):
 
 ```text
 python scripts/build_stub.py

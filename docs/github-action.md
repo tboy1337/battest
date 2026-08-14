@@ -1,7 +1,8 @@
 # GitHub Action
 
 The composite action lives at the repository root (`action.yml`) so consumers
-can write `uses: tboy1337/battest@v0.1.0`. It must run on **Windows**.
+can write `uses: tboy1337/battest@v0.1.0` after that tag is published. It must
+run on **Windows**. Pin a published release tag rather than a floating branch.
 
 ```yaml
 jobs:
@@ -14,7 +15,7 @@ jobs:
         with:
           path: tests
           safe-defaults: "true"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: battest-junit
@@ -26,8 +27,8 @@ Inputs:
 | Name | Default | Meaning |
 |---|---|---|
 | `path` | empty (CLI default) | Discovery path |
-| `extra-args` | empty | Extra `battest run` arguments. A JSON array of strings (starts with `[`) is parsed as argv; otherwise the value is split on spaces, so quoted paths with spaces are not supported in the space-split form. Invalid JSON fails the action with an explicit error. JSON objects are rejected; the value must be an array |
-| `safe-defaults` | `true` | Stub destructive externals. Enabled unless the value is `false`, `0`, `no`, or `off` (case-insensitive) |
+| `extra-args` | empty | Extra `battest run` arguments. A JSON array of strings (starts with `[`) is parsed as argv. Every element must be a JSON string; objects, numbers, booleans, and `null` fail the action. Otherwise the value is split on spaces, so quoted paths with spaces are not supported in the space-split form. Invalid JSON fails the action with an explicit error |
+| `safe-defaults` | `true` | Stub destructive externals. Enabled unless the value is `false`, `0`, `no`, or `off` (case-insensitive). The Action default is on; the CLI default is off |
 | `python-version` | `3.14` | Python used to install battest |
 
 Outputs:

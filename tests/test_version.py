@@ -33,6 +33,8 @@ def test_fallback_version_missing_and_without_version_line(
     pyproject.write_text("[project]\nname = 'battest'\n", encoding="utf-8")
     monkeypatch.setattr("battest._version._pyproject_path", lambda: pyproject)
     assert _fallback_version() == "unknown"
+    pyproject.write_text("project = 'not-a-table'\n", encoding="utf-8")
+    assert _fallback_version() == "unknown"
 
 
 def test_get_version_prefers_installed_metadata_over_pyproject(
@@ -71,3 +73,12 @@ def test_get_version_falls_back_to_pyproject(
 
     monkeypatch.setattr("battest._version.version", boom)
     assert get_version() == "1.2.3"
+
+
+def test_fallback_version_invalid_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("this is not toml {", encoding="utf-8")
+    monkeypatch.setattr("battest._version._pyproject_path", lambda: pyproject)
+    assert _fallback_version() == "unknown"

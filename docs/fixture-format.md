@@ -54,11 +54,15 @@ If `params` is present, battest runs the base document **and** each overlay.
 Overlay ids become `name[id]` and must be unique. Mock `exit_code` values must
 be 0–255 (cmd `ERRORLEVEL` range). `copy` entries are placed in the isolated
 work dir using the relative path from the fixture file; paths that escape the
-fixture directory are rejected. `script`, `setup`, `teardown`, and `equals_file`
-paths are likewise confined to the fixture directory (absolute paths and `..`
-escapes are rejected).
+fixture directory are rejected. `script`, `setup`, and `teardown` are copied
+into the work directory using that same relative layout, so `%~dp0` is the
+workdir copy of the script directory. Sibling files that are not the script,
+setup, or teardown still need `copy:`. `equals_file` paths are likewise
+confined to the fixture directory (absolute paths and `..` escapes are
+rejected).
 
-`setup` runs before the script under test. Assertions (exit code, output, env,
+`setup` runs before the script under test. Setup, the script, and teardown
+share one wall-clock timeout. Assertions (exit code, output, env,
 files, mock calls) run against the work directory **before** `teardown`.
 `teardown` always runs when it is set, including after a failed `setup`. A
 failing teardown turns an otherwise passing case into `ERROR`.
@@ -81,7 +85,10 @@ Omit `script` when `input.cmd` sits beside `expect.yaml`.
 requires the captured text to contain no CR bytes. `crlf` requires CRLF line
 endings in the captured text (lone LF fails) and canonicalizes expected YAML
 LF to CRLF so authors can write logical lines. Invalid `regex` patterns are a
-schema error.
+schema error. `regex` is matched against newline-normalized captured text; the
+pattern itself is not rewritten. A non-UTF-8 `equals_file` is a case failure,
+not a runner crash. Each `files` entry must set at least one of `exists`,
+`not_exists`, `contains`, `equals`, or `equals_file`.
 
 ## Environment matchers
 

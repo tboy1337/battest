@@ -41,7 +41,7 @@ runs:
       shell: pwsh
       run: |
         python -m pip install --upgrade pip
-        python -m pip install $env:GITHUB_ACTION_PATH
+        python -m pip install -- "$env:GITHUB_ACTION_PATH"
 
     - name: Run battest
       id: run-battest
@@ -71,10 +71,21 @@ runs:
             } catch {
               throw "battest extra-args is not valid JSON: $_"
             }
+            if ($null -eq $parsed) {
+              throw "battest extra-args JSON must be an array of strings"
+            }
             if ($parsed -is [System.Management.Automation.PSCustomObject]) {
               throw "battest extra-args JSON must be an array of strings"
             }
-            foreach ($item in @($parsed)) { $cmdArgs += [string]$item }
+            foreach ($item in @($parsed)) {
+              if ($item -is [System.Management.Automation.PSCustomObject]) {
+                throw "battest extra-args JSON must be an array of strings"
+              }
+              if ($item -isnot [string]) {
+                throw "battest extra-args JSON must be an array of strings"
+              }
+              $cmdArgs += $item
+            }
           } else {
             $cmdArgs += $extra.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
           }

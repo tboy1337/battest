@@ -33,6 +33,10 @@ def _should_skip_dir(path: Path) -> bool:
     return path.name in DISCOVERY_SKIP_DIR_NAMES
 
 
+def _log_walk_error(exc: OSError) -> None:
+    LOGGER.warning("skipping unreadable directory during discovery: %s", exc)
+
+
 def iter_fixture_files(root: Path) -> list[Path]:
     """Return sorted fixture paths under root."""
     if root.is_file():
@@ -41,19 +45,27 @@ def iter_fixture_files(root: Path) -> list[Path]:
     if not root.is_dir():
         raise SchemaError(f"discovery path does not exist: {root}")
     found: list[Path] = []
-    for current_dir, dir_names, file_names in root.walk():
-        dir_names[:] = [
-            name for name in dir_names if name not in DISCOVERY_SKIP_DIR_NAMES
-        ]
-        if _should_skip_dir(current_dir):
-            continue
-        for file_name in file_names:
-            path = current_dir / file_name
-            if file_name.endswith(".battest.yaml"):
-                found.append(path)
+    try:
+        walker = root.walk(on_error=_log_walk_error)
+    except OSError as exc:
+        LOGGER.error("cannot walk discovery path %s: %s", root, exc)
+        return []
+    try:
+        for current_dir, dir_names, file_names in walker:
+            dir_names[:] = [
+                name for name in dir_names if name not in DISCOVERY_SKIP_DIR_NAMES
+            ]
+            if _should_skip_dir(current_dir):
                 continue
-            if file_name == "expect.yaml" and (current_dir / "input.cmd").is_file():
-                found.append(path)
+            for file_name in file_names:
+                path = current_dir / file_name
+                if file_name.endswith(".battest.yaml"):
+                    found.append(path)
+                    continue
+                if file_name == "expect.yaml" and (current_dir / "input.cmd").is_file():
+                    found.append(path)
+    except OSError as exc:
+        LOGGER.error("cannot walk discovery path %s: %s", root, exc)
     unique = sorted(set(found))
     LOGGER.info("discovered %s fixture file(s) under %s", len(unique), root)
     return unique

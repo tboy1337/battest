@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
@@ -28,6 +29,18 @@ from battest.models import Case, EngineConfig, Outcome, RunResult
 
 LOGGER = get_logger("engine")
 CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+
+@dataclass(frozen=True)
+class PreparedWork:
+    """Isolated workdir paths and environment for one case."""
+
+    wrapper: Path
+    mock_dir: Path | None
+    env: dict[str, str]
+    setup_path: Path | None
+    teardown_path: Path | None
+
 
 _WRAPPER_TEMPLATE = """@echo off
 call "%BATTEST_SUT%" %*
@@ -184,10 +197,15 @@ def collapse_path_keys(env: dict[str, str]) -> str:
     return kept_key
 
 
-def _combined_env(case: Case, work_dir: Path, mock_dir: Path | None) -> dict[str, str]:
+def _combined_env(
+    case: Case,
+    work_dir: Path,
+    mock_dir: Path | None,
+    sut_path: Path | None = None,
+) -> dict[str, str]:
     env = {str(key): str(value) for key, value in os.environ.items()}
     env.update(case.env)
-    env["BATTEST_SUT"] = str(case.script_path)
+    env["BATTEST_SUT"] = str(sut_path if sut_path is not None else case.script_path)
     env["BATTEST_ENVFILE"] = str(work_dir / ENV_DUMP_NAME)
     env["NoDefaultCurrentDirectoryInEXEPath"] = "1"
     path_key = collapse_path_keys(env)
@@ -215,6 +233,11 @@ def resolved_timeout(case: Case, config: EngineConfig) -> float:
     return config.default_timeout_seconds
 
 
+def remaining_timeout(deadline: float) -> float:
+    """Seconds left until deadline, never negative."""
+    return max(0.0, deadline - time.perf_counter())
+
+
 def _encode_stdin(stdin_text: str, encoding: str) -> bytes | None:
     if not stdin_text:
         return None
@@ -237,18 +260,24 @@ def _snapshot_env(work_dir: Path, encoding: str) -> dict[str, str]:
     )
 
 
+def _relocated_path(work_dir: Path, source: Path, base_dir: Path) -> Path:
+    relative = source.resolve().relative_to(base_dir.resolve())
+    return work_dir / relative
+
+
 def _run_setup(
     case: Case,
     work_dir: Path,
     env: dict[str, str],
     timeout: float,
     encoding: str,
+    setup_path: Path | None,
 ) -> str | None:
-    if case.setup_path is None:
+    if setup_path is None:
         return None
     try:
         setup_exit, _, setup_err, setup_timeout = _run_process(
-            build_cmd_line(case.setup_path, []),
+            build_cmd_line(setup_path, []),
             work_dir,
             env,
             "",
@@ -274,12 +303,13 @@ def _run_teardown(
     env: dict[str, str],
     timeout: float,
     encoding: str,
+    teardown_path: Path | None,
 ) -> str | None:
-    if case.teardown_path is None:
+    if teardown_path is None:
         return None
     try:
         exit_code, _, stderr, timed_out = _run_process(
-            build_cmd_line(case.teardown_path, []),
+            build_cmd_line(teardown_path, []),
             work_dir,
             env,
             "",
@@ -392,37 +422,70 @@ def _error_result(
     )
 
 
-def _prepare_work_dir(
-    case: Case, config: EngineConfig, work_dir: Path
-) -> tuple[Path, Path | None, dict[str, str]]:
-    _seed_work_dir(work_dir, case.copy_paths, case.source_path.parent)
+def _prepare_work_dir(case: Case, config: EngineConfig, work_dir: Path) -> PreparedWork:
+    base_dir = case.source_path.parent
+    to_copy = list(case.copy_paths)
+    to_copy.append(case.script_path)
+    if case.setup_path is not None:
+        to_copy.append(case.setup_path)
+    if case.teardown_path is not None:
+        to_copy.append(case.teardown_path)
+    _seed_work_dir(work_dir, to_copy, base_dir)
     mocks = effective_mocks(case.mocks, case.allow, config.safe_defaults)
     mock_dir = write_mock_tree(work_dir, mocks) if mocks else None
     wrapper = work_dir / WRAPPER_NAME
     wrapper.write_text(_WRAPPER_TEMPLATE, encoding="utf-8")
-    env = _combined_env(case, work_dir, mock_dir)
-    return wrapper, mock_dir, env
+    sut_path = _relocated_path(work_dir, case.script_path, base_dir)
+    env = _combined_env(case, work_dir, mock_dir, sut_path=sut_path)
+    setup_path = (
+        _relocated_path(work_dir, case.setup_path, base_dir)
+        if case.setup_path is not None
+        else None
+    )
+    teardown_path = (
+        _relocated_path(work_dir, case.teardown_path, base_dir)
+        if case.teardown_path is not None
+        else None
+    )
+    return PreparedWork(
+        wrapper=wrapper,
+        mock_dir=mock_dir,
+        env=env,
+        setup_path=setup_path,
+        teardown_path=teardown_path,
+    )
 
 
 def _run_sut(
     case: Case,
     config: EngineConfig,
     work_dir: Path,
-    wrapper: Path,
-    mock_dir: Path | None,
-    env: dict[str, str],
+    prepared: PreparedWork,
     encoding: str,
     timeout: float,
+    deadline: float,
     warnings: list[str],
     started: float,
 ) -> RunResult:
-    setup_error = _run_setup(case, work_dir, env, timeout, encoding)
+    setup_error = _run_setup(
+        case,
+        work_dir,
+        prepared.env,
+        remaining_timeout(deadline),
+        encoding,
+        prepared.setup_path,
+    )
     if setup_error is not None:
         return _error_result(case, started, warnings, setup_error)
     try:
-        command = build_cmd_line(wrapper, case.args)
+        command = build_cmd_line(prepared.wrapper, case.args)
         exit_code, stdout, stderr, timed_out = _run_process(
-            command, work_dir, env, case.stdin, timeout, encoding
+            command,
+            work_dir,
+            prepared.env,
+            case.stdin,
+            remaining_timeout(deadline),
+            encoding,
         )
     except OSError as exc:
         LOGGER.error("sut failed for %s: %s", case.case_id, exc)
@@ -432,7 +495,7 @@ def _run_sut(
         case,
         config,
         work_dir,
-        mock_dir,
+        prepared.mock_dir,
         encoding,
         timeout,
         warnings,
@@ -463,23 +526,30 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
     ) as raw_temp:
         work_dir = Path(raw_temp)
         try:
-            wrapper, mock_dir, env = _prepare_work_dir(case, config, work_dir)
+            prepared = _prepare_work_dir(case, config, work_dir)
         except (OSError, MockError) as exc:
             LOGGER.error("case %s failed before execution: %s", case.case_id, exc)
             return _error_result(case, started, warnings, str(exc))
+        deadline = started + timeout
         result = _run_sut(
             case,
             config,
             work_dir,
-            wrapper,
-            mock_dir,
-            env,
+            prepared,
             encoding,
             timeout,
+            deadline,
             warnings,
             started,
         )
-        teardown_error = _run_teardown(case, work_dir, env, timeout, encoding)
+        teardown_error = _run_teardown(
+            case,
+            work_dir,
+            prepared.env,
+            remaining_timeout(deadline),
+            encoding,
+            prepared.teardown_path,
+        )
         return _apply_teardown_result(result, teardown_error)
 
 

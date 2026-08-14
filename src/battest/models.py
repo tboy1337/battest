@@ -82,6 +82,17 @@ class FileMatcher(BaseModel):
         """Reject exists and not_exists both set to True."""
         if self.exists is True and self.not_exists is True:
             raise ValueError("file matcher cannot set both exists and not_exists")
+        if (
+            self.exists is None
+            and self.not_exists is None
+            and self.contains is None
+            and self.equals is None
+            and self.equals_file is None
+        ):
+            raise ValueError(
+                "file matcher must set exists, not_exists, contains, equals, "
+                "or equals_file"
+            )
         return self
 
 
@@ -96,7 +107,9 @@ class CallExpectation(BaseModel):
     @model_validator(mode="after")
     def require_constraint(self) -> CallExpectation:
         """Require args_contains or not_called so empty expectations cannot pass."""
-        if self.args_contains is None and self.not_called is None:
+        if self.not_called is False:
+            raise ValueError("not_called must be true when set")
+        if self.args_contains is None and self.not_called is not True:
             raise ValueError("call expectation must set args_contains or not_called")
         return self
 
@@ -111,6 +124,13 @@ class MockSpec(BaseModel):
     stderr: str = ""
     record_calls: bool = True
     expect_calls: list[CallExpectation] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def expect_calls_require_recording(self) -> MockSpec:
+        """Reject expect_calls when call logs are not recorded."""
+        if self.expect_calls and not self.record_calls:
+            raise ValueError("expect_calls requires record_calls to be true")
+        return self
 
 
 class EnvExpect(BaseModel):
