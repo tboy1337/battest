@@ -41,6 +41,15 @@ def test_build_steps_include_rust_typecheck_lint_and_coverage() -> None:
     assert any("check_coverage.py" in item for item in joined)
     assert any("pylint" in item and "scripts" in item for item in joined)
     assert any("pip_audit" in item and "-r" not in item.split() for item in joined)
+    assert any(
+        "blinter" in item.split()
+        and "scripts" in item.split()
+        and "blinter.ini" in item
+        for item in joined
+    )
+    assert any(
+        "blinter" in item.split() and "examples" in item.split() for item in joined
+    )
     if sys.platform == "win32":
         assert any("build_stub.py" in item for item in joined)
         assert any("battest_stub.exe" in item for item in joined)
@@ -77,6 +86,14 @@ def test_build_steps_honor_skip_flags() -> None:
         for command, skip in steps
     )
     assert any(skip and command[1] == "audit" for command, skip in steps)
+    assert any(
+        skip and "blinter" in command and "scripts" in command
+        for command, skip in steps
+    )
+    assert any(
+        skip and "blinter" in command and "examples" in command
+        for command, skip in steps
+    )
 
 
 def test_main_requires_cargo(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -138,3 +155,27 @@ def test_main_succeeds_when_all_steps_pass(
         command[-1] == "scripts/check_rust_coverage.py" and skip
         for command, skip in seen
     )
+
+
+def test_main_powershell_only_requires_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_verify()
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    assert module.main(["--powershell-only"]) == 2
+
+
+def test_main_powershell_only_runs_action_checker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_verify()
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], skip: bool) -> int:
+        seen.append(command)
+        assert skip is False
+        return 0
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    assert module.main(["--powershell-only"]) == 0
+    assert seen
+    assert seen[0][-1] == "scripts/check_action_ps1.ps1"

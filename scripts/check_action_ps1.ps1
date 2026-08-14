@@ -1,15 +1,15 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Run PSScriptAnalyzer and Pester against the composite action script.
+    Run PSScriptAnalyzer and Pester against action, installer, and exe-smoke scripts.
 #>
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$actionScript = Join-Path -Path $PSScriptRoot -ChildPath 'run-battest-action.ps1'
-$pesterTests = Join-Path -Path $repoRoot -ChildPath 'tests\test_run_battest_action.ps1'
+$analyzerSettings = Join-Path -Path $PSScriptRoot -ChildPath 'PSScriptAnalyzerSettings.psd1'
+. (Join-Path -Path $PSScriptRoot -ChildPath 'InstallerPs.Helpers.ps1')
 
 if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
     Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
@@ -21,14 +21,27 @@ if (-not $pester5) {
 }
 Import-Module -Name Pester -MinimumVersion 5.0.0
 
-$analyzer = Invoke-ScriptAnalyzer -Path $actionScript -Severity @('Error', 'Warning')
-if ($analyzer) {
-    $analyzer | Format-Table -AutoSize | Out-String | Write-Output
+$analyzePaths = Get-PowerShellAnalyzePaths -ScriptsRoot $PSScriptRoot
+foreach ($path in $analyzePaths) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "PowerShell script missing: $path"
+    }
+}
+
+$issues = Invoke-InstallerPsScriptAnalyzer -Paths $analyzePaths -SettingsPath $analyzerSettings
+if ($issues) {
+    $issues | Format-Table -AutoSize | Out-String | Write-Output
     throw 'PSScriptAnalyzer reported issues'
 }
 
+$pesterPaths = @(
+    (Join-Path -Path $repoRoot -ChildPath 'tests\test_run_battest_action.ps1'),
+    (Join-Path -Path $PSScriptRoot -ChildPath 'TestInstallerPs.Tests.ps1'),
+    (Join-Path -Path $PSScriptRoot -ChildPath 'TestExeSmoke.Tests.ps1')
+)
+
 $pesterConfig = New-PesterConfiguration
-$pesterConfig.Run.Path = $pesterTests
+$pesterConfig.Run.Path = $pesterPaths
 $pesterConfig.Run.Exit = $true
 $pesterConfig.Output.Verbosity = 'Detailed'
 Invoke-Pester -Configuration $pesterConfig

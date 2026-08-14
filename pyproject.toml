@@ -4,7 +4,7 @@ requires = [ "setuptools>=77" ]
 
 [project]
 name = "battest"
-version = "0.1.0"
+version = "1.0.0"
 description = """\
   battest is a runtime test runner for Windows batch files. It executes real cmd.exe scripts and asserts on exit \
   codes, output, environment, and filesystem side effects.\
@@ -53,6 +53,7 @@ optional-dependencies.dev = [
   "autopep8",
   "bandit",
   "black",
+  "blinter",
   "isort",
   "mypy",
   "pip-audit",

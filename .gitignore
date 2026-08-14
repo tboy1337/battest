@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# PyInstaller
+file_version_info.txt
+*.spec
+!battest.spec
+warn-battest.txt
+xref-battest.html
+
 # Python packaging and distribution
 build/
 dist/

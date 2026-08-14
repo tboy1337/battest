@@ -95,6 +95,22 @@ def build_steps(
         ),
         (
             [
+                python,
+                "-m",
+                "blinter",
+                "scripts",
+                "--no-recursive",
+                "--config",
+                "scripts/blinter.ini",
+            ],
+            skip_lint,
+        ),
+        (
+            [python, "-m", "blinter", "examples"],
+            skip_lint,
+        ),
+        (
+            [
                 cargo,
                 "check",
                 "--manifest-path",
@@ -178,7 +194,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-lint", action="store_true")
     parser.add_argument("--skip-audit", action="store_true")
     parser.add_argument("--skip-tests", action="store_true")
+    parser.add_argument(
+        "--powershell-only",
+        action="store_true",
+        help="Run only Windows PowerShell checks (PSScriptAnalyzer and Pester)",
+    )
     args = parser.parse_args(argv)
+    if args.powershell_only:
+        if sys.platform != "win32":
+            LOGGER.error("PowerShell checks require Windows")
+            return 2
+        LOGGER.info("running PowerShell-only verification")
+        return _run(
+            ["powershell", "-NoProfile", "-File", "scripts/check_action_ps1.ps1"],
+            False,
+        )
     python = sys.executable
     cargo = shutil.which("cargo")
     if cargo is None:

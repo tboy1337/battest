@@ -11,9 +11,62 @@ spec). It does not depend on Blinter.
 **Requirements:** Python 3.11+ and Windows (for `battest run`). License:
 AGPL-3.0-or-later ([COPYING](COPYING)). Changelog: [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
+A version bump of `[project].version` in `pyproject.toml` on `main` is the
+release trigger (Windows exe zip, GitHub Release, and PyPI). Do not bump the
+version until the `PYPI_BATTEST` GitHub Actions secret is set.
+
+## Installation
+
+**Option 1: Install via pip (recommended)**
+
+```text
+pip install battest
+```
+
+**Option 2: Standalone executable (no Python)**
+
+If you prefer a standalone `.exe` over pip, use the one-line installer:
+
+```text
+curl -L https://raw.githubusercontent.com/tboy1337/battest/main/scripts/install_battest.cmd -o install_battest.cmd && (call install_battest.cmd || cd .) && del install_battest.cmd
+```
+
+This installs the latest `battest.exe` to `%LOCALAPPDATA%\Programs\battest\bin`,
+adds it to your user `PATH`, and handles updates automatically. Restart your
+terminal or IDE after installation for `PATH` changes to take effect.
+
+**Manual zip download (fallback):**
+
+- Download the latest `Battest-vX.Y.Z.zip` from
+  [GitHub Releases](https://github.com/tboy1337/battest/releases)
+- Extract the archive; the executable is `Battest-vX.Y.Z\battest.exe`
+- Some antivirus software may flag the executable as a false positive due to
+  PyInstaller's runtime unpacking behavior. The executable is safe (all source
+  code is open for inspection). pip installation avoids that issue.
+
+### Uninstall
+
+**Standalone executable (one-line installer):**
+
+```text
+curl -L https://raw.githubusercontent.com/tboy1337/battest/main/scripts/uninstall_battest.cmd -o uninstall_battest.cmd && (call uninstall_battest.cmd || cd .) && del uninstall_battest.cmd
+```
+
+**pip installation:**
+
+```text
+pip uninstall battest
+```
+
 ## Five-minute start
 
-1. Install from git until a PyPI release is published:
+1. Install from PyPI (or git until the first release is published):
+
+```text
+pip install battest
+```
+
+Until a PyPI release exists:
 
 ```text
 pip install git+https://github.com/tboy1337/battest.git
