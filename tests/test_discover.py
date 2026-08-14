@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -180,24 +181,19 @@ def test_iter_fixture_files_logs_walk_errors(
         "description: keep\nexpect:\n  exit_code: 0\n",
         encoding="utf-8",
     )
-    original = Path.walk
+    original = os.walk
 
     def wrapping_walk(
-        self: Path,
-        top_down: bool = True,
-        on_error: object = None,
-        follow_symlinks: bool = False,
+        top: str | os.PathLike[str],
+        topdown: bool = True,
+        onerror: object = None,
+        followlinks: bool = False,
     ) -> object:
-        if callable(on_error):
-            on_error(PermissionError("locked-dir"))
-        return original(
-            self,
-            top_down=top_down,
-            on_error=on_error,
-            follow_symlinks=follow_symlinks,
-        )
+        if callable(onerror):
+            onerror(PermissionError("locked-dir"))
+        return original(top, topdown=topdown, onerror=onerror, followlinks=followlinks)
 
-    monkeypatch.setattr(Path, "walk", wrapping_walk)
+    monkeypatch.setattr(os, "walk", wrapping_walk)
     with caplog.at_level("WARNING", logger="battest.discover"):
         found = iter_fixture_files(tmp_path)
     assert any(path.name == "keep.battest.yaml" for path in found)
@@ -207,10 +203,10 @@ def test_iter_fixture_files_logs_walk_errors(
 def test_iter_fixture_files_walk_oserror_returns_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    def boom_walk(self: Path, **_kwargs: object) -> object:
+    def boom_walk(_top: object, **_kwargs: object) -> object:
         raise OSError("cannot walk")
 
-    monkeypatch.setattr(Path, "walk", boom_walk)
+    monkeypatch.setattr(os, "walk", boom_walk)
     with caplog.at_level("ERROR", logger="battest.discover"):
         assert iter_fixture_files(tmp_path) == []
     assert "cannot walk" in caplog.text
@@ -219,11 +215,11 @@ def test_iter_fixture_files_walk_oserror_returns_empty(
 def test_iter_fixture_files_walk_iteration_oserror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    def flaky_walk(self: Path, **_kwargs: object) -> object:
-        yield self, [], ["keep.battest.yaml"]
+    def flaky_walk(top: object, **_kwargs: object) -> object:
+        yield str(top), [], ["keep.battest.yaml"]
         raise OSError("mid-walk")
 
-    monkeypatch.setattr(Path, "walk", flaky_walk)
+    monkeypatch.setattr(os, "walk", flaky_walk)
     with caplog.at_level("ERROR", logger="battest.discover"):
         found = iter_fixture_files(tmp_path)
     assert any(path.name == "keep.battest.yaml" for path in found)

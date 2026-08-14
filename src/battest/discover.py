@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from battest.constants import DISCOVERY_SKIP_DIR_NAMES
@@ -46,12 +47,14 @@ def iter_fixture_files(root: Path) -> list[Path]:
         raise SchemaError(f"discovery path does not exist: {root}")
     found: list[Path] = []
     try:
-        walker = root.walk(on_error=_log_walk_error)
+        LOGGER.debug("walking discovery path %s", root)
+        walker = os.walk(root, onerror=_log_walk_error)
     except OSError as exc:
         LOGGER.error("cannot walk discovery path %s: %s", root, exc)
         return []
     try:
-        for current_dir, dir_names, file_names in walker:
+        for dirpath, dir_names, file_names in walker:
+            current_dir = Path(dirpath)
             dir_names[:] = [
                 name for name in dir_names if name not in DISCOVERY_SKIP_DIR_NAMES
             ]

@@ -8,7 +8,7 @@ battest is a sibling of [Blinter](https://github.com/tboy1337/Blinter) (static
 analysis) and [batch-spec](https://github.com/tboy1337/batch-spec) (language
 spec). It does not depend on Blinter.
 
-**Requirements:** Python 3.12+ and Windows (for `battest run`). License:
+**Requirements:** Python 3.11+ and Windows (for `battest run`). License:
 AGPL-3.0-or-later.
 
 ## Five-minute start
