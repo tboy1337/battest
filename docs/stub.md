@@ -6,9 +6,12 @@ prebuilt PE at `src/battest/data/battest_stub.exe`.
 
 The packaged PE is rebuilt on Windows with the toolchain in
 `rust-toolchain.toml` (currently 1.97.1) and MSVC `/Brepro` plus
-`-C debuginfo=0`. CI fails if that rebuild differs from the committed file.
-There is no cross-compile path; refresh the PE on Windows after stub source
-or toolchain changes.
+`-C debuginfo=0`. GitHub-hosted Windows runners use a different MSVC/SDK than
+a local Windows box, so CI rebuilds the stub for tests and does not require a
+byte-identical PE. `python scripts/verify.py` on Windows still rebuilds and
+fails if `src/battest/data/battest_stub.exe` drifted. There is no
+cross-compile path; refresh the PE on Windows after stub source or toolchain
+changes.
 
 ## Layout
 

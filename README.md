@@ -12,8 +12,9 @@ spec). It does not depend on Blinter.
 AGPL-3.0-or-later ([COPYING](COPYING)). Changelog: [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 A version bump of `[project].version` in `pyproject.toml` on `main` is the
-release trigger (Windows exe zip, GitHub Release, and PyPI). Do not bump the
-version until the `PYPI_BATTEST` GitHub Actions secret is set.
+release trigger (Windows exe zip, GitHub Release, and PyPI). If that version
+never got a `v*` tag, the next successful `main` CI run retries the release.
+Do not bump the version until the `PYPI_BATTEST` GitHub Actions secret is set.
 
 ## Installation
 

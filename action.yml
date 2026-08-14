@@ -32,12 +32,31 @@ runs:
           throw "battest requires a Windows runner (runs-on: windows-*). Current RUNNER_OS=$env:RUNNER_OS"
         }
 
+    - name: Resolve pip cache dependency path
+      id: pip-cache
+      shell: pwsh
+      run: |
+        if ([string]::IsNullOrWhiteSpace($env:GITHUB_ACTION_PATH)) {
+          throw "GITHUB_ACTION_PATH is missing; cannot resolve pyproject.toml for pip cache"
+        }
+        $actionRoot = (Resolve-Path -LiteralPath $env:GITHUB_ACTION_PATH).Path
+        $toml = Join-Path $actionRoot 'pyproject.toml'
+        if (-not (Test-Path -LiteralPath $toml)) {
+          throw "pyproject.toml is missing at $toml"
+        }
+        $resolved = (Resolve-Path -LiteralPath $toml).Path
+        # setup-python rejects '.' / '..' in cache patterns; github.action_path
+        # is often 'D:\a\repo\repo\.' when this composite action is used as ./
+        $normalized = $resolved.Replace('\', '/')
+        Write-Host "pip cache dependency path: $normalized"
+        "path=$normalized" >> $env:GITHUB_OUTPUT
+
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
         python-version: ${{ inputs.python-version }}
         cache: pip
-        cache-dependency-path: ${{ github.action_path }}/pyproject.toml
+        cache-dependency-path: ${{ steps.pip-cache.outputs.path }}
 
     - name: Install battest
       shell: pwsh

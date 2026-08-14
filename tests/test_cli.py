@@ -455,3 +455,111 @@ def test_root_action_yml_is_composite() -> None:
     assert "Starting battest" in script
     assert "Write-Host" not in script
     assert "cmdArgs -join" not in script
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _load_ci_workflow() -> dict[str, object]:
+    path = _repo_root() / ".github" / "workflows" / "CI.yml"
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def test_root_action_yml_resolves_pip_cache_path() -> None:
+    action_path = _repo_root() / "action.yml"
+    raw = action_path.read_text(encoding="utf-8")
+    loaded = yaml.safe_load(raw)
+    steps = loaded["runs"]["steps"]
+    pip_cache = next(step for step in steps if step.get("id") == "pip-cache")
+    setup_python = next(
+        step
+        for step in steps
+        if str(step.get("uses", "")).startswith("actions/setup-python@")
+    )
+    assert pip_cache["shell"] == "pwsh"
+    run_text = str(pip_cache["run"])
+    assert "Resolve-Path" in run_text
+    assert "GITHUB_ACTION_PATH" in run_text
+    assert "github.action_path }}/pyproject.toml" not in raw
+    assert (
+        setup_python["with"]["cache-dependency-path"]
+        == "${{ steps.pip-cache.outputs.path }}"
+    )
+    names = [step.get("name") for step in steps]
+    assert names.index("Resolve pip cache dependency path") < names.index(
+        "Set up Python"
+    )
+
+
+def test_ci_windows_pytest_rebuilds_stub_without_pe_byte_match() -> None:
+    workflow = _load_ci_workflow()
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    test_windows = jobs["test-windows"]
+    assert isinstance(test_windows, dict)
+    steps = test_windows["steps"]
+    assert isinstance(steps, list)
+    rebuild = next(
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == "Rebuild PATH-mock stub"
+    )
+    assert "build_stub.py" in str(rebuild.get("run"))
+    drift_steps = [
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and "battest_stub.exe" in str(step.get("run", ""))
+        and "git diff" in str(step.get("run", ""))
+    ]
+    assert drift_steps == []
+
+
+def test_ci_dependency_graph_does_not_block_release() -> None:
+    workflow = _load_ci_workflow()
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    dependency_graph = jobs["dependency-graph"]
+    check_version = jobs["check-version"]
+    assert isinstance(dependency_graph, dict)
+    assert isinstance(check_version, dict)
+    assert dependency_graph.get("continue-on-error") is True
+    submit = next(
+        step
+        for step in dependency_graph["steps"]
+        if isinstance(step, dict)
+        and step.get("name") == "Submit dependency snapshot"
+    )
+    assert submit.get("continue-on-error") is True
+    needs = check_version["needs"]
+    assert isinstance(needs, list)
+    assert "dependency-graph" not in needs
+    assert "test-windows" in needs
+    assert "action-windows" in needs
+
+
+def test_ci_retries_release_when_version_tag_is_missing() -> None:
+    workflow = _load_ci_workflow()
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    check_version = jobs["check-version"]
+    assert isinstance(check_version, dict)
+    checkout = next(
+        step
+        for step in check_version["steps"]
+        if isinstance(step, dict) and step.get("uses") == "actions/checkout@v7"
+    )
+    assert checkout["with"]["fetch-tags"] is True
+    decide = next(
+        step
+        for step in check_version["steps"]
+        if isinstance(step, dict) and step.get("id") == "check"
+    )
+    script = str(decide.get("run"))
+    assert 'git rev-parse --verify --quiet "refs/tags/v${NEW_VERSION}"' in script
+    assert "tag v${NEW_VERSION} is missing; releasing." in script
+    assert "should_release=true" in script
+    assert "should_release=false" in script

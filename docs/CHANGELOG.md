@@ -21,6 +21,10 @@ Production-readiness fixes for the runner, GitHub Action, and PATH-mock stub.
   MSVC `/Brepro`. Stub I/O failures print `battest-stub:` on stderr.
 - CI releases follow Blinter: bump `[project].version` in `pyproject.toml` on
   `main` to build `battest.exe`, create a GitHub Release, and publish to PyPI.
+  A later `main` push still releases if that version tag is missing (retry
+  after a failed first attempt). Dependency Graph submission cannot block
+  release. Windows pytest rebuilds the PATH-mock stub but does not require a
+  byte-identical PE against GitHub-hosted MSVC.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 

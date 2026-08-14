@@ -40,7 +40,10 @@ Outputs:
 |---|---|
 | `junit-xml` | Path to the JUnit XML report under `$RUNNER_TEMP`. Set even when battest exits non-zero, so a later `if: always()` upload step can attach the report |
 
-The action fails if `RUNNER_OS` is not Windows. Inputs are passed through
+The action fails if `RUNNER_OS` is not Windows. Pip cache hashing resolves
+`GITHUB_ACTION_PATH` to a canonical path first because `uses: ./` sets that
+variable to a directory ending in `.`, which `actions/setup-python` rejects.
+Inputs are passed through
 environment variables so they are not interpolated into the PowerShell script.
 The run step invokes [`scripts/run-battest-action.ps1`](../scripts/run-battest-action.ps1).
 That script creates a unique JUnit path (`battest-junit-<guid>.xml`) under

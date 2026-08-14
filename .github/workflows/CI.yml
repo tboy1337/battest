@@ -120,9 +120,6 @@ jobs:
       - name: Rebuild PATH-mock stub
         run: python scripts/build_stub.py
 
-      - name: Fail if packaged stub PE drifted
-        run: git diff --exit-code -- src/battest/data/battest_stub.exe
-
       - name: Run full tests
         run: python -m pytest
 
@@ -372,6 +369,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    continue-on-error: true
     permissions:
       contents: write
     steps:
@@ -380,6 +378,7 @@ jobs:
           persist-credentials: false
 
       - name: Submit dependency snapshot
+        continue-on-error: true
         uses: advanced-security/component-detection-dependency-submission-action@v0.1.4
         with:
           detectorArgs: Pip=EnableIfDefaultOff
@@ -395,7 +394,6 @@ jobs:
       - rust-quality
       - rust-test
       - test-windows-exe
-      - dependency-graph
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -409,6 +407,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 2
+          fetch-tags: true
           persist-credentials: false
 
       - name: Read version from pyproject.toml
@@ -439,11 +438,17 @@ jobs:
               sys.exit('Could not read previous version from pyproject.toml')
           ")
           NEW_VERSION="${{ steps.version.outputs.version }}"
-          if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
-            echo "Version unchanged ($NEW_VERSION); skipping release."
+          if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+            echo "Version bumped: $OLD_VERSION -> $NEW_VERSION"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git rev-parse --verify --quiet "refs/tags/v${NEW_VERSION}"; then
+            echo "Version unchanged ($NEW_VERSION) and tag v${NEW_VERSION} exists; skipping release."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Version bumped: $OLD_VERSION -> $NEW_VERSION"
+            echo "Version unchanged ($NEW_VERSION) but tag v${NEW_VERSION} is missing; releasing."
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
