@@ -7,7 +7,6 @@ from pathlib import Path
 import re
 from typing import Never
 
-from battest.filesnap import file_text
 from battest.logging_config import get_logger
 from battest.models import (
     AssertionFailure,
@@ -50,9 +49,25 @@ def apply_newline_mode(text: str, mode: NewlineMode) -> str:
             raise ValueError(f"unhandled newline mode: {unreachable}")
 
 
-def _read_equals_file(source_dir: Path, relative: str) -> str:
-    path = relative if Path(relative).is_absolute() else source_dir / relative
-    return Path(path).read_text(encoding="utf-8")
+def _read_equals_file(source_dir: Path, relative: str) -> str | None:
+    path = Path(relative) if Path(relative).is_absolute() else source_dir / relative
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        LOGGER.error("equals_file unreadable %s: %s", path, exc)
+        return None
+
+
+def confined_work_path(work_dir: Path, relative: str) -> Path | None:
+    """Return work_dir/relative when it stays inside work_dir, else None."""
+    resolved_root = work_dir.resolve()
+    candidate = (work_dir / relative).resolve()
+    try:
+        candidate.relative_to(resolved_root)
+    except ValueError:
+        LOGGER.warning("path %s escapes work dir %s", relative, work_dir)
+        return None
+    return candidate
 
 
 def _fail(
@@ -110,17 +125,26 @@ def match_output(
             )
     if matcher.equals_file is not None:
         expected_text = _read_equals_file(source_dir, matcher.equals_file)
-        expected_cmp = apply_newline_mode(expected_text, matcher.newline)
-        if actual_cmp != expected_cmp:
+        if expected_text is None:
             failures.append(
                 _fail(
                     stream_name,
-                    f"{stream_name} did not equal file {matcher.equals_file}",
-                    expected=expected_text,
-                    actual=actual,
-                    diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+                    f"{stream_name} equals_file not found: {matcher.equals_file}",
+                    expected=matcher.equals_file,
                 )
             )
+        else:
+            expected_cmp = apply_newline_mode(expected_text, matcher.newline)
+            if actual_cmp != expected_cmp:
+                failures.append(
+                    _fail(
+                        stream_name,
+                        f"{stream_name} did not equal file {matcher.equals_file}",
+                        expected=expected_text,
+                        actual=actual,
+                        diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+                    )
+                )
     if matcher.contains is not None:
         needle = apply_newline_mode(matcher.contains, matcher.newline)
         if needle not in actual_cmp:
@@ -214,7 +238,12 @@ def match_files(
     """Compare filesystem expectations against the isolated working directory."""
     failures: list[AssertionFailure] = []
     for matcher in matchers:
-        path = work_dir / matcher.path
+        path = confined_work_path(work_dir, matcher.path)
+        if path is None:
+            failures.append(
+                _fail("files", f"path escapes work directory: {matcher.path}")
+            )
+            continue
         exists = path.is_file() or path.is_dir()
         if matcher.exists is True and not exists:
             failures.append(_fail("files", f"expected path to exist: {matcher.path}"))
@@ -227,8 +256,15 @@ def match_files(
             or matcher.equals is not None
             or matcher.equals_file is not None
         ):
-            text = file_text(work_dir, matcher.path)
-            if text is None:
+            if not path.is_file():
+                failures.append(
+                    _fail("files", f"file not found for content check: {matcher.path}")
+                )
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                LOGGER.error("failed to read %s: %s", path, exc)
                 failures.append(
                     _fail("files", f"file not found for content check: {matcher.path}")
                 )
@@ -254,6 +290,14 @@ def match_files(
                 )
             if matcher.equals_file is not None:
                 expected_text = _read_equals_file(source_dir, matcher.equals_file)
+                if expected_text is None:
+                    failures.append(
+                        _fail(
+                            "files",
+                            f"equals_file not found: {matcher.equals_file}",
+                        )
+                    )
+                    continue
                 if text != expected_text:
                     failures.append(
                         _fail(
@@ -275,9 +319,8 @@ def match_mock_calls(
     failures: list[AssertionFailure] = []
     for name, spec in mocks.items():
         lines = recorded.get(name.lower(), [])
-        nonempty = [line for line in lines if line.strip() != "" or line == ""]
         for expectation in spec.expect_calls:
-            failures.extend(_match_one_call(name, expectation, nonempty))
+            failures.extend(_match_one_call(name, expectation, lines))
     return failures
 
 

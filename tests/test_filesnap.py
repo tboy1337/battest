@@ -38,3 +38,36 @@ def test_file_text_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_snapshot_missing_root(tmp_path: Path) -> None:
     assert snapshot_files(tmp_path / "missing") == {}
+
+
+def test_snapshot_skips_directories(tmp_path: Path) -> None:
+    (tmp_path / "subdir").mkdir()
+    (tmp_path / "keep.txt").write_text("ok", encoding="utf-8")
+    snapshot = snapshot_files(tmp_path)
+    assert snapshot == {"keep.txt": b"ok"}
+
+
+def test_snapshot_read_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "keep.txt"
+    target.write_text("ok", encoding="utf-8")
+
+    def boom(self: Path) -> bytes:
+        raise OSError("denied")
+
+    monkeypatch.setattr(Path, "read_bytes", boom)
+    assert snapshot_files(tmp_path) == {}
+
+
+def test_snapshot_skips_empty_relative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "keep.txt").write_text("ok", encoding="utf-8")
+    original = Path.rglob
+
+    def with_root(self: Path, pattern: str) -> object:
+        if self.resolve() == tmp_path.resolve():
+            yield self
+        yield from original(self, pattern)
+
+    monkeypatch.setattr(Path, "rglob", with_root)
+    assert snapshot_files(tmp_path) == {"keep.txt": b"ok"}

@@ -91,6 +91,16 @@ def _run_command(args: argparse.Namespace) -> int:
         args.timeout,
         args.safe_defaults,
     )
+    if args.timeout <= 0:
+        message = "--timeout must be positive"
+        LOGGER.error("%s", message)
+        print(message, file=sys.stderr)
+        return 2
+    if args.jobs < 1:
+        message = "--jobs must be at least 1"
+        LOGGER.error("%s", message)
+        print(message, file=sys.stderr)
+        return 2
     try:
         cases = discover_cases(root, include_spec_exec=args.include_spec_exec)
     except SchemaError as exc:
@@ -105,7 +115,7 @@ def _run_command(args: argparse.Namespace) -> int:
     config = EngineConfig(
         safe_defaults=args.safe_defaults,
         max_diff=args.max_diff,
-        jobs=max(1, args.jobs),
+        jobs=args.jobs,
         default_timeout_seconds=args.timeout,
     )
     try:

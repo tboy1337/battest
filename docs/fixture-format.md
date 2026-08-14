@@ -1,7 +1,8 @@
 # Fixture format
 
-battest accepts two equivalent shapes. Both are validated by
-`schema/battest-expect.schema.json` and the Pydantic models in the package.
+battest accepts two equivalent shapes. Runtime loading validates documents with
+the Pydantic models in the package. `schema/battest-expect.schema.json` is the
+editor/CI catalog (copied into package data); it is not the loader.
 
 ## Manifest file
 
@@ -50,7 +51,10 @@ params:
 ```
 
 If `params` is present, battest runs the base document **and** each overlay.
-Overlay ids become `name[id]`.
+Overlay ids become `name[id]`. Mock `exit_code` values must be 0–255 (cmd
+`ERRORLEVEL` range). `copy` entries are placed in the isolated work dir using
+the relative path from the fixture file; paths that escape the fixture
+directory are rejected.
 
 ## Case directory
 
@@ -79,3 +83,7 @@ locals, matching cmd.exe.
 `battest run [path]` walks `*.battest.yaml` and `expect.yaml`+`input.cmd`.
 Default path is `./tests` when that directory exists, otherwise the current
 directory. `vendor/`, `.git/`, and virtualenv directories are skipped.
+Scanning a directory uses root-relative case ids (`a/hello`, `b/hello`) so
+parallel runs cannot collide. Duplicate ids are a schema error. Running a
+single file keeps the stem id (`hello`). File matcher paths cannot escape the
+isolated work directory.

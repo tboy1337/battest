@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from battest.constants import DEFAULT_MAX_DIFF, DEFAULT_TIMEOUT_SECONDS
 from battest.discover import discover_cases
 from battest.engine import execute_case, execute_cases
 from battest.models import Case, EngineConfig, RunResult
@@ -22,10 +23,18 @@ def run_case(
     case: Case,
     *,
     safe_defaults: bool = False,
-    max_diff: int = 2000,
+    max_diff: int = DEFAULT_MAX_DIFF,
+    timeout_seconds: float | None = None,
 ) -> RunResult:
     """Execute a single resolved case."""
-    config = EngineConfig(safe_defaults=safe_defaults, max_diff=max_diff, jobs=1)
+    config = EngineConfig(
+        safe_defaults=safe_defaults,
+        max_diff=max_diff,
+        jobs=1,
+        default_timeout_seconds=(
+            timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
+        ),
+    )
     return execute_case(case, config)
 
 
@@ -33,13 +42,17 @@ def run_cases(
     cases: list[Case],
     *,
     safe_defaults: bool = False,
-    max_diff: int = 2000,
+    max_diff: int = DEFAULT_MAX_DIFF,
     jobs: int = 1,
+    timeout_seconds: float | None = None,
 ) -> list[RunResult]:
     """Execute many resolved cases."""
     config = EngineConfig(
         safe_defaults=safe_defaults,
         max_diff=max_diff,
         jobs=jobs,
+        default_timeout_seconds=(
+            timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
+        ),
     )
     return execute_cases(cases, config)

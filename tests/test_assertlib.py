@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
+
+import pytest
 
 from battest.assertlib import (
     apply_newline_mode,
@@ -29,12 +32,66 @@ from battest.models import (
 def test_newline_auto_normalizes() -> None:
     assert apply_newline_mode("a\r\nb\r\n", NewlineMode.AUTO) == "a\nb\n"
     assert apply_newline_mode("a\r\nb\r\n", NewlineMode.CRLF) == "a\r\nb\r\n"
+    assert apply_newline_mode("a\r\nb\r\n", NewlineMode.LF) == "a\nb\n"
+    with pytest.raises(ValueError, match="unhandled newline mode"):
+        apply_newline_mode("x", cast(NewlineMode, object()))
 
 
-def test_match_output_equals_auto() -> None:
-    matcher = OutputMatcher(equals="hello\n", newline=NewlineMode.AUTO)
-    failures = match_output("stdout", matcher, "hello\r\n", Path("."), 200)
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "plain",
+        "a\nb\n",
+        "a\r\nb\r\n",
+        "a\rb\r",
+        "mix\r\n\n\rend",
+        "\r",
+        "\n",
+        "\r\n",
+    ],
+)
+def test_newline_auto_strips_carriage_returns(text: str) -> None:
+    normalized = apply_newline_mode(text, NewlineMode.AUTO)
+    assert "\r" not in normalized
+    assert apply_newline_mode(normalized, NewlineMode.AUTO) == normalized
+
+
+def test_match_output_equals_success() -> None:
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals="hello\n", newline=NewlineMode.AUTO),
+        "hello\r\n",
+        Path("."),
+        200,
+    )
     assert failures == []
+
+
+def test_match_output_equals_mismatch() -> None:
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals="hello\n"),
+        "goodbye\n",
+        Path("."),
+        200,
+    )
+    assert failures
+    assert "did not equal" in failures[0].message
+
+
+def test_match_output_equals_file_content_mismatch(tmp_path: Path) -> None:
+    golden = tmp_path / "expected.txt"
+    golden.write_text("hello\n", encoding="utf-8")
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals_file="expected.txt"),
+        "goodbye\n",
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "did not equal file" in failures[0].message
 
 
 def test_match_output_contains_and_empty() -> None:
@@ -56,6 +113,15 @@ def test_match_output_contains_and_empty() -> None:
     assert missing
 
 
+def test_match_output_empty_false() -> None:
+    empty = match_output("stdout", OutputMatcher(empty=False), "", Path("."), 200)
+    assert empty
+    nonempty = match_output(
+        "stdout", OutputMatcher(empty=False), "payload", Path("."), 200
+    )
+    assert nonempty == []
+
+
 def test_match_output_regex_and_equals_file(tmp_path: Path) -> None:
     expected = tmp_path / "out.txt"
     expected.write_text("abc\n", encoding="utf-8")
@@ -65,9 +131,17 @@ def test_match_output_regex_and_equals_file(tmp_path: Path) -> None:
     assert len(failed) >= 1
 
 
+def test_match_output_equals_file_missing_is_failure(tmp_path: Path) -> None:
+    matcher = OutputMatcher(equals_file="missing-golden.txt")
+    failures = match_output("stdout", matcher, "abc\n", tmp_path, 200)
+    assert len(failures) == 1
+    assert "missing-golden.txt" in failures[0].message
+
+
 def test_match_exit_code() -> None:
     assert match_exit_code(0, 0) == []
     assert match_exit_code(0, 1)
+    assert match_exit_code(None, 7) == []
 
 
 def test_match_env_values_and_unset() -> None:
@@ -106,6 +180,105 @@ def test_match_files(tmp_path: Path) -> None:
     assert bad
 
 
+def test_match_files_rejects_path_escape(tmp_path: Path) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("classified", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    failures = match_files(
+        [FileMatcher(path="../secret.txt", exists=True)],
+        work,
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert (
+        "work" in failures[0].message.lower() or "escap" in failures[0].message.lower()
+    )
+
+
+def test_match_files_equals_file_missing_is_failure(tmp_path: Path) -> None:
+    (tmp_path / "out.txt").write_text("hello", encoding="utf-8")
+    failures = match_files(
+        [FileMatcher(path="out.txt", equals_file="no-such-golden.txt")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "no-such-golden.txt" in failures[0].message
+
+
+def test_match_files_exists_and_not_exists(tmp_path: Path) -> None:
+    (tmp_path / "present.txt").write_text("x", encoding="utf-8")
+    missing = match_files(
+        [FileMatcher(path="absent.txt", exists=True)],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert missing
+    present = match_files(
+        [FileMatcher(path="present.txt", not_exists=True)],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert present
+
+
+def test_match_files_content_checks(tmp_path: Path) -> None:
+    (tmp_path / "out.txt").write_text("hello", encoding="utf-8")
+    golden = tmp_path / "expected.txt"
+    golden.write_text("hello", encoding="utf-8")
+    wrong_golden = tmp_path / "other.txt"
+    wrong_golden.write_text("other", encoding="utf-8")
+    missing_file = match_files(
+        [FileMatcher(path="nope.txt", contains="x")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert "file not found" in missing_file[0].message
+    contains_miss = match_files(
+        [FileMatcher(path="out.txt", contains="zzz")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert "did not contain" in contains_miss[0].message
+    equals_file_miss = match_files(
+        [FileMatcher(path="out.txt", equals_file="other.txt")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert "did not equal" in equals_file_miss[0].message
+
+
+def test_match_files_read_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "out.txt"
+    target.write_text("hello", encoding="utf-8")
+    original = Path.read_text
+
+    def boom(self: Path, *args: object, **kwargs: object) -> str:
+        if self.resolve() == target.resolve():
+            raise OSError("denied")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", boom)
+    failures = match_files(
+        [FileMatcher(path="out.txt", contains="hello")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "file not found" in failures[0].message
+
+
 def test_match_mock_calls() -> None:
     mocks = {
         "ipconfig": MockSpec(expect_calls=[CallExpectation(args_contains="/flushdns")])
@@ -115,6 +288,14 @@ def test_match_mock_calls() -> None:
     unused = {"net": MockSpec(expect_calls=[CallExpectation(not_called=True)])}
     assert match_mock_calls(unused, {"net": []}) == []
     assert match_mock_calls(unused, {"net": ["session"]})
+    unconstrained = {"net": MockSpec(expect_calls=[CallExpectation()])}
+    assert match_mock_calls(unconstrained, {"net": ["anything"]}) == []
+
+
+def test_match_mock_calls_whitespace_only_line_counts_as_call() -> None:
+    unused = {"net": MockSpec(expect_calls=[CallExpectation(not_called=True)])}
+    failures = match_mock_calls(unused, {"net": ["   "]})
+    assert failures
 
 
 def test_unified_diff_truncates() -> None:

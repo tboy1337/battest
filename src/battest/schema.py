@@ -126,10 +126,17 @@ def _collect_warnings(document: CaseDocument, script_path: Path) -> list[str]:
 
 def _copy_paths(base_dir: Path, names: list[str], source: Path) -> list[Path]:
     resolved: list[Path] = []
+    resolved_base = base_dir.resolve()
     for name in names:
         path = _resolve_optional(base_dir, name)
         if path is None or not path.exists():
             raise SchemaError(f"copy path not found for {source}: {name}")
+        try:
+            path.resolve().relative_to(resolved_base)
+        except ValueError as exc:
+            raise SchemaError(
+                f"copy path escapes fixture directory for {source}: {name}"
+            ) from exc
         resolved.append(path)
     return resolved
 
@@ -143,7 +150,7 @@ def _case_from_document(
     env: dict[str, str],
     mocks: dict[str, MockSpec],
     expect: Expect,
-    timeout_seconds: float,
+    timeout_seconds: float | None,
     allow: list[str],
 ) -> Case:
     base_dir = source.parent
@@ -190,7 +197,7 @@ def _apply_overlay(document: CaseDocument, overlay: ParamOverlay) -> tuple[
     dict[str, str],
     dict[str, MockSpec],
     Expect,
-    float,
+    float | None,
     list[str],
 ]:
     args = list(overlay.args) if overlay.args is not None else list(document.args)
@@ -211,13 +218,39 @@ def _apply_overlay(document: CaseDocument, overlay: ParamOverlay) -> tuple[
     return args, stdin, env, mocks, expect, timeout_seconds, allow
 
 
-def expand_cases(document: CaseDocument, source: Path) -> list[Case]:
-    """Expand a document into one case, or base plus each params entry."""
-    stem = source.stem
+def fixture_stem(source: Path) -> str:
+    """Return the default case id stem for a fixture path."""
     if source.name.endswith(".battest.yaml"):
-        stem = source.name[: -len(".battest.yaml")]
-    elif source.name == "expect.yaml":
-        stem = source.parent.name
+        return source.name[: -len(".battest.yaml")]
+    if source.name == "expect.yaml":
+        return source.parent.name
+    return source.stem
+
+
+def relative_case_id(source: Path, root: Path) -> str:
+    """Return a discovery-root-relative case id for a fixture file."""
+    stem = fixture_stem(source)
+    try:
+        relative = source.parent.resolve().relative_to(root.resolve())
+    except ValueError:
+        LOGGER.warning(
+            "fixture %s is outside discovery root %s; using stem id", source, root
+        )
+        return stem
+    if source.name == "expect.yaml":
+        if not relative.parts:
+            return stem
+        return relative.as_posix()
+    if relative.parts:
+        return f"{relative.as_posix()}/{stem}"
+    return stem
+
+
+def expand_cases(
+    document: CaseDocument, source: Path, *, base_case_id: str | None = None
+) -> list[Case]:
+    """Expand a document into one case, or base plus each params entry."""
+    stem = fixture_stem(source) if base_case_id is None else base_case_id
     cases: list[Case] = []
     base = _case_from_document(
         document,
@@ -261,8 +294,8 @@ def expand_cases(document: CaseDocument, source: Path) -> list[Case]:
     return cases
 
 
-def load_cases_from_path(path: Path) -> list[Case]:
+def load_cases_from_path(path: Path, *, base_case_id: str | None = None) -> list[Case]:
     """Load and expand cases from a YAML fixture file."""
     payload = load_yaml_mapping(path)
     document = parse_document(payload, path)
-    return expand_cases(document, path)
+    return expand_cases(document, path, base_case_id=base_case_id)

@@ -38,6 +38,7 @@ jobs:
           python -m isort --check-only src tests scripts
           python -m mypy src/battest tests scripts
           python -m pylint src/battest
+          python -m pyproject_fmt --check pyproject.toml
           python -m bandit -r src/battest -c pyproject.toml -ll -q
           python -m pip_audit -r requirements.txt -r requirements-dev.txt
 
@@ -70,6 +71,9 @@ jobs:
       - name: Run unit tests
         run: python -m pytest -m "not windows"
 
+      - name: Check line, branch, function, and class coverage
+        run: python scripts/check_coverage.py
+
   test-windows:
     name: pytest windows (${{ matrix.python-version }})
     runs-on: windows-latest
@@ -98,8 +102,24 @@ jobs:
       - name: Run full tests
         run: python -m pytest
 
+      - name: Check line, branch, function, and class coverage
+        run: python scripts/check_coverage.py
+
       - name: Run example suites
         run: python -m battest run examples --safe-defaults
+
+  action-windows:
+    name: Composite action dogfood
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: ./
+        with:
+          path: examples
+          safe-defaults: "true"
 
   codeql:
     name: CodeQL (${{ matrix.language }})

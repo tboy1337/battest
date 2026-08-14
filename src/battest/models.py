@@ -86,7 +86,7 @@ class MockSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    exit_code: int = 0
+    exit_code: int = Field(default=0, ge=0, le=255)
     stdout: str = ""
     stderr: str = ""
     record_calls: bool = True
@@ -145,7 +145,7 @@ class ParamOverlay(BaseModel):
     env: dict[str, str] | None = None
     mocks: dict[str, MockSpec] | None = None
     expect: Expect | None = None
-    timeout_seconds: float | None = None
+    timeout_seconds: float | None = Field(default=None, gt=0)
     allow: list[str] | None = None
 
 
@@ -159,7 +159,7 @@ class CaseDocument(BaseModel):
     args: list[str] = Field(default_factory=list)
     stdin: str = ""
     env: dict[str, str] = Field(default_factory=dict)
-    timeout_seconds: float = 30.0
+    timeout_seconds: float | None = Field(default=None, gt=0)
     setup: str | None = None
     teardown: str | None = None
     mocks: dict[str, MockSpec] = Field(default_factory=dict)
@@ -177,14 +177,6 @@ class CaseDocument(BaseModel):
             raise ValueError("description must not be empty")
         return stripped
 
-    @field_validator("timeout_seconds")
-    @classmethod
-    def timeout_positive(cls, value: float) -> float:
-        """Reject non-positive timeouts."""
-        if value <= 0:
-            raise ValueError("timeout_seconds must be positive")
-        return value
-
 
 class Case(BaseModel):
     """Fully resolved runnable test case."""
@@ -198,7 +190,7 @@ class Case(BaseModel):
     args: list[str] = Field(default_factory=list)
     stdin: str = ""
     env: dict[str, str] = Field(default_factory=dict)
-    timeout_seconds: float = 30.0
+    timeout_seconds: float | None = Field(default=None, gt=0)
     setup_path: Path | None = None
     teardown_path: Path | None = None
     mocks: dict[str, MockSpec] = Field(default_factory=dict)
@@ -246,8 +238,8 @@ class EngineConfig(BaseModel):
 
     safe_defaults: bool = False
     max_diff: int = 2000
-    jobs: int = 1
-    default_timeout_seconds: float = 30.0
+    jobs: int = Field(default=1, ge=1)
+    default_timeout_seconds: float = Field(default=30.0, gt=0)
 
 
 def merge_expect(base: Expect, overlay: Expect | None) -> Expect:

@@ -37,7 +37,7 @@ exclude_lines =
     raise NotImplementedError
     if 0:
     if False:
-    if __name__ .__eq__ .__main__.:
+    if __name__ == .__main__.:
     @(abc\.)?abstractmethod
     if TYPE_CHECKING:
     if DEBUG:
@@ -51,7 +51,7 @@ partial_branches =
     pragma: no branch
     if 0:
     if False:
-    if __name__ .__eq__ .__main__.:
+    if __name__ == .__main__.:
 exclude_also =
     if TYPE_CHECKING:
     if sys\.platform

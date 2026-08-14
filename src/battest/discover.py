@@ -7,7 +7,12 @@ from pathlib import Path
 from battest.constants import DISCOVERY_SKIP_DIR_NAMES
 from battest.logging_config import get_logger
 from battest.models import Case
-from battest.schema import SchemaError, load_cases_from_path
+from battest.schema import (
+    SchemaError,
+    fixture_stem,
+    load_cases_from_path,
+    relative_case_id,
+)
 from battest.spec import spec_exec_corpus_path
 
 LOGGER = get_logger("discover")
@@ -54,6 +59,33 @@ def iter_fixture_files(root: Path) -> list[Path]:
     return unique
 
 
+def _cases_from_root(root: Path) -> list[Case]:
+    cases: list[Case] = []
+    single_file = root.is_file()
+    discovery_root = root.parent if single_file else root
+    for fixture in iter_fixture_files(root):
+        base_case_id = (
+            fixture_stem(fixture)
+            if single_file
+            else relative_case_id(fixture, discovery_root)
+        )
+        loaded = load_cases_from_path(fixture, base_case_id=base_case_id)
+        LOGGER.debug("loaded %s cases from %s", len(loaded), fixture)
+        cases.extend(loaded)
+    return cases
+
+
+def _ensure_unique_case_ids(cases: list[Case]) -> None:
+    seen: dict[str, Path] = {}
+    for case in cases:
+        previous = seen.get(case.case_id)
+        if previous is not None:
+            raise SchemaError(
+                f"duplicate case id {case.case_id!r}: {previous} and {case.source_path}"
+            )
+        seen[case.case_id] = case.source_path
+
+
 def discover_cases(
     root: Path,
     *,
@@ -61,18 +93,14 @@ def discover_cases(
     repo_root: Path | None = None,
 ) -> list[Case]:
     """Load every fixture under root, optionally including batch-spec corpus/exec."""
-    cases: list[Case] = []
-    for fixture in iter_fixture_files(root):
-        loaded = load_cases_from_path(fixture)
-        LOGGER.debug("loaded %s cases from %s", len(loaded), fixture)
-        cases.extend(loaded)
+    cases = _cases_from_root(root)
     if include_spec_exec:
         corpus = spec_exec_corpus_path(repo_root)
         if corpus is not None and corpus.resolve() != root.resolve():
             LOGGER.info("including spec exec corpus %s", corpus)
-            for fixture in iter_fixture_files(corpus):
-                cases.extend(load_cases_from_path(fixture))
+            cases.extend(_cases_from_root(corpus))
         else:
             LOGGER.info("spec exec corpus absent or already included")
+    _ensure_unique_case_ids(cases)
     LOGGER.info("total cases discovered: %s", len(cases))
     return cases

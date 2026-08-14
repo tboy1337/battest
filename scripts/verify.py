@@ -64,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
         ([python, "-m", "mypy", "src/battest", "tests", "scripts"], args.skip_lint),
         ([python, "-m", "pylint", "src/battest"], args.skip_lint),
         (
+            [python, "-m", "pyproject_fmt", "--check", "pyproject.toml"],
+            args.skip_format,
+        ),
+        (
             [
                 python,
                 "-m",
@@ -108,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             args.skip_audit or cargo_audit is None,
         ),
         ([python, "-m", "pytest"], args.skip_tests),
+        ([python, "scripts/check_coverage.py"], args.skip_tests),
         (
             [
                 cargo,

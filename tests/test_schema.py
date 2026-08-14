@@ -6,11 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from battest.models import CaseDocument, OutputMatcher
+from battest.models import (
+    CaseDocument,
+    Expect,
+    MockSpec,
+    OutputMatcher,
+    merge_expect,
+    merge_mocks,
+)
 from battest.schema import (
     SchemaError,
+    fixture_stem,
     load_cases_from_path,
     parse_document,
+    relative_case_id,
     schema_payload,
 )
 
@@ -25,6 +34,15 @@ def test_schema_payload_is_object() -> None:
     payload = schema_payload()
     assert payload["title"] == "battest fixture document"
     assert "expect" in payload["$defs"]
+    exit_schema = payload["$defs"]["mockSpec"]["properties"]["exit_code"]
+    assert exit_schema["minimum"] == 0
+    assert exit_schema["maximum"] == 255
+
+
+def test_schema_payload_rejects_non_object(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("battest.schema.json.loads", lambda _text: ["not-an-object"])
+    with pytest.raises(SchemaError, match="not an object"):
+        schema_payload()
 
 
 def test_parse_document_rejects_empty_description() -> None:
@@ -78,6 +96,13 @@ def test_setup_missing(tmp_path: Path) -> None:
     )
     with pytest.raises(SchemaError, match="setup script"):
         load_cases_from_path(manifest)
+    manifest.write_text(
+        "description: teardown\nscript: run.cmd\nteardown: missing.cmd\n"
+        "expect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="teardown script"):
+        load_cases_from_path(manifest)
     manifest = tmp_path / "missing.battest.yaml"
     manifest.write_text(
         "description: missing\nexpect:\n  exit_code: 0\n",
@@ -115,6 +140,55 @@ def test_params_expand_base_and_overlay(tmp_path: Path) -> None:
     assert cases[0].expect.exit_code == 0
 
 
+def test_params_overlay_timeout(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: matrix",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "params:",
+                "  - id: slow",
+                "    timeout_seconds: 5",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    assert cases[0].timeout_seconds is None
+    assert cases[1].timeout_seconds == 5.0
+
+
+def test_relative_case_id_outside_root(tmp_path: Path) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    fixture = other / "tool.battest.yaml"
+    fixture.write_text("x", encoding="utf-8")
+    assert relative_case_id(fixture, tmp_path / "root") == "tool"
+
+
+def test_relative_case_id_nested_expect_yaml(tmp_path: Path) -> None:
+    nested = tmp_path / "suite" / "alpha"
+    nested.mkdir(parents=True)
+    fixture = nested / "expect.yaml"
+    fixture.write_text("x", encoding="utf-8")
+    assert relative_case_id(fixture, tmp_path) == "suite/alpha"
+
+
+def test_relative_case_id_expect_yaml_at_root(tmp_path: Path) -> None:
+    fixture = tmp_path / "expect.yaml"
+    fixture.write_text("x", encoding="utf-8")
+    assert relative_case_id(fixture, tmp_path) == tmp_path.name
+
+
+def test_fixture_stem_plain_yaml() -> None:
+    assert fixture_stem(Path("foo.yaml")) == "foo"
+    assert fixture_stem(Path("hello.battest.yaml")) == "hello"
+
+
 def test_deprecated_command_warning(tmp_path: Path) -> None:
     _write_script(tmp_path, "run.cmd")
     manifest = tmp_path / "run.battest.yaml"
@@ -134,6 +208,112 @@ def test_deprecated_command_warning(tmp_path: Path) -> None:
     )
     cases = load_cases_from_path(manifest)
     assert any("deprecated" in item for item in cases[0].warnings)
+
+
+def test_removed_command_warning(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: removed mock",
+                "script: run.cmd",
+                "mocks:",
+                "  edlin:",
+                "    exit_code: 0",
+                "expect:",
+                "  exit_code: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    assert any("removed" in item for item in cases[0].warnings)
+
+
+def test_invalid_tilde_in_script_and_args(tmp_path: Path) -> None:
+    (tmp_path / "run.cmd").write_text("@echo off\r\necho %~q1\r\n", encoding="utf-8")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: tilde",
+                "script: run.cmd",
+                "args: ['%~*']",
+                "expect:",
+                "  exit_code: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    joined = " ".join(cases[0].warnings)
+    assert "%~q1" in joined
+    assert "%~*" in joined
+
+
+def test_script_read_oserror_skips_tilde_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "description: locked\nscript: run.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    original = Path.read_text
+
+    def maybe_boom(self: Path, *args: object, **kwargs: object) -> str:
+        if self.suffix.lower() == ".cmd":
+            raise OSError("locked")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", maybe_boom)
+    cases = load_cases_from_path(manifest)
+    assert cases[0].script_path.name == "run.cmd"
+
+
+def test_params_overlay_env_and_allow(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: matrix",
+                "script: run.cmd",
+                "env:",
+                "  BASE: '1'",
+                "allow:",
+                "  - format",
+                "expect:",
+                "  exit_code: 0",
+                "params:",
+                "  - id: extra",
+                "    env:",
+                "      EXTRA: '2'",
+                "    allow:",
+                "      - reg",
+                "    stdin: overlay-in",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    overlay = cases[1]
+    assert overlay.env["BASE"] == "1"
+    assert overlay.env["EXTRA"] == "2"
+    assert overlay.allow == ["format", "reg"]
+    assert overlay.stdin == "overlay-in"
+
+
+def test_script_file_missing(tmp_path: Path) -> None:
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "description: missing script\nscript: nope.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="script not found"):
+        load_cases_from_path(manifest)
 
 
 def test_internal_mock_warning(tmp_path: Path) -> None:
@@ -178,6 +358,54 @@ def test_env_expect_plain_mapping() -> None:
     assert document.expect.env.unset == ["BAZ"]
 
 
+def test_env_expect_values_object() -> None:
+    document = parse_document(
+        {
+            "description": "env",
+            "script": "x.cmd",
+            "expect": {"env": {"values": {"FOO": "bar"}, "unset": ["BAZ"]}},
+        },
+        Path("doc.yaml"),
+    )
+    assert document.expect.env is not None
+    assert document.expect.env.values["FOO"] == "bar"
+    assert document.expect.env.unset == ["BAZ"]
+
+
+def test_env_expect_values_and_extras() -> None:
+    document = parse_document(
+        {
+            "description": "env",
+            "script": "x.cmd",
+            "expect": {"env": {"values": {"FOO": "bar"}, "BAZ": "qux"}},
+        },
+        Path("doc.yaml"),
+    )
+    assert document.expect.env is not None
+    assert document.expect.env.values["FOO"] == "bar"
+    assert document.expect.env.values["BAZ"] == "qux"
+
+
+def test_env_expect_rejects_non_mapping() -> None:
+    with pytest.raises(SchemaError):
+        parse_document(
+            {"description": "env", "expect": {"env": ["FOO"]}},
+            Path("doc.yaml"),
+        )
+
+
+def test_merge_expect_and_mocks_none_overlay() -> None:
+    base = Expect(exit_code=0)
+    assert merge_expect(base, None).exit_code == 0
+    assert merge_mocks({"net": MockSpec(exit_code=1)}, None) == {
+        "net": MockSpec(exit_code=1)
+    }
+    merged = merge_mocks({"net": MockSpec(exit_code=1)}, {"net": MockSpec(exit_code=2)})
+    assert merged["net"].exit_code == 2
+    skipped = merge_expect(Expect(exit_code=1), Expect(exit_code=None))
+    assert skipped.exit_code == 1
+
+
 def test_file_matcher_conflict() -> None:
     with pytest.raises(SchemaError):
         parse_document(
@@ -199,6 +427,45 @@ def test_timeout_must_be_positive() -> None:
         )
 
 
+def test_omitted_timeout_seconds_is_none() -> None:
+    document = parse_document(
+        {"description": "t", "expect": {"exit_code": 0}},
+        Path("doc.yaml"),
+    )
+    assert document.timeout_seconds is None
+
+
+def test_explicit_timeout_seconds_is_kept() -> None:
+    document = parse_document(
+        {"description": "t", "timeout_seconds": 12.5, "expect": {"exit_code": 0}},
+        Path("doc.yaml"),
+    )
+    assert document.timeout_seconds == 12.5
+
+
+def test_loaded_case_omits_timeout_when_yaml_omits(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "description: tool\nscript: run.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    assert cases[0].timeout_seconds is None
+
+
+def test_param_overlay_timeout_must_be_positive() -> None:
+    with pytest.raises(SchemaError):
+        parse_document(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "params": [{"id": "slow", "timeout_seconds": 0}],
+            },
+            Path("doc.yaml"),
+        )
+
+
 def test_copy_path_must_exist(tmp_path: Path) -> None:
     _write_script(tmp_path, "run.cmd")
     manifest = tmp_path / "run.battest.yaml"
@@ -207,6 +474,36 @@ def test_copy_path_must_exist(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(SchemaError, match="copy path"):
+        load_cases_from_path(manifest)
+
+
+def test_copy_path_is_resolved(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    nested = tmp_path / "fixtures"
+    nested.mkdir()
+    seed = nested / "seed.txt"
+    seed.write_text("ok", encoding="utf-8")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "description: copy\nscript: run.cmd\ncopy: [fixtures/seed.txt]\n"
+        "expect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    assert cases[0].copy_paths == [seed.resolve()]
+
+
+def test_copy_path_must_stay_under_fixture_dir(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    outside = tmp_path.parent / "battest-outside.txt"
+    outside.write_text("nope", encoding="utf-8")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "description: copy\nscript: run.cmd\ncopy: [../battest-outside.txt]\n"
+        "expect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="escap"):
         load_cases_from_path(manifest)
 
 
@@ -224,3 +521,37 @@ def test_case_document_dump_roundtrip() -> None:
     assert restored.expect.exit_code == 7
     assert restored.expect.stdout is not None
     assert restored.expect.stdout.empty is True
+
+
+def test_mock_exit_code_must_be_byte_range() -> None:
+    with pytest.raises(SchemaError):
+        parse_document(
+            {
+                "description": "mock",
+                "expect": {"exit_code": 0},
+                "mocks": {"ipconfig": {"exit_code": 256}},
+            },
+            Path("doc.yaml"),
+        )
+    with pytest.raises(SchemaError):
+        parse_document(
+            {
+                "description": "mock",
+                "expect": {"exit_code": 0},
+                "mocks": {"ipconfig": {"exit_code": -1}},
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_mock_exit_code_accepts_byte_boundaries() -> None:
+    document = parse_document(
+        {
+            "description": "mock",
+            "expect": {"exit_code": 0},
+            "mocks": {"ipconfig": {"exit_code": 255}, "net": {"exit_code": 0}},
+        },
+        Path("doc.yaml"),
+    )
+    assert document.mocks["ipconfig"].exit_code == 255
+    assert document.mocks["net"].exit_code == 0

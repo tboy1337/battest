@@ -10,9 +10,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import Protocol
 
 from battest.assertlib import evaluate_case
-from battest.constants import ENV_DUMP_NAME, WRAPPER_NAME
+from battest.constants import ENV_DUMP_NAME, KILL_DRAIN_TIMEOUT_SECONDS, WRAPPER_NAME
 from battest.encoding import console_encoding, decode_output
 from battest.envsnap import filter_helper_vars, parse_set_output
 from battest.logging_config import get_logger
@@ -37,6 +38,22 @@ exit /b %BATTEST_RC%
 
 class EngineError(RuntimeError):
     """Raised when the host cannot execute batch tests."""
+
+
+class TerminableProcess(Protocol):
+    """Process that can be drained and killed after a timeout.
+
+    ``communicate`` matches :meth:`subprocess.Popen.communicate` so a real
+    ``Popen`` is a structural subtype.
+    """
+
+    def communicate(  # pylint: disable=redefined-builtin
+        self, input: bytes | None = None, timeout: float | None = None
+    ) -> tuple[bytes, bytes]:
+        """Read remaining stdout and stderr."""
+
+    def kill(self) -> None:
+        """Forcibly terminate the process."""
 
 
 def require_windows() -> None:
@@ -71,9 +88,28 @@ def kill_process_tree(pid: int) -> None:
     )
 
 
-def _seed_work_dir(work_dir: Path, copy_paths: list[Path]) -> None:
+def drain_after_timeout(
+    process: TerminableProcess, timeout_seconds: float
+) -> tuple[bytes, bytes]:
+    """Collect remaining output after a kill, bounded by timeout_seconds."""
+    try:
+        return process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        LOGGER.error("process did not exit after timeout; sending kill")
+        process.kill()
+        try:
+            return process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            LOGGER.error("process still alive after kill")
+            return b"", b""
+
+
+def _seed_work_dir(work_dir: Path, copy_paths: list[Path], base_dir: Path) -> None:
+    resolved_base = base_dir.resolve()
     for source in copy_paths:
-        destination = work_dir / source.name
+        relative = source.resolve().relative_to(resolved_base)
+        destination = work_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
         LOGGER.info("seeding %s -> %s", source, destination)
         if source.is_dir():
             shutil.copytree(source, destination)
@@ -115,7 +151,9 @@ def _run_process(
             LOGGER.error("process timed out pid=%s", process.pid)
             if process.pid is not None:
                 kill_process_tree(process.pid)
-            stdout_bytes, stderr_bytes = process.communicate()
+            stdout_bytes, stderr_bytes = drain_after_timeout(
+                process, KILL_DRAIN_TIMEOUT_SECONDS
+            )
         exit_code = process.returncode if process.returncode is not None else -1
     stdout = decode_output(stdout_bytes or b"", encoding)
     stderr = decode_output(stderr_bytes or b"", encoding)
@@ -165,13 +203,20 @@ def _script_warnings(case: Case) -> list[str]:
     return warnings
 
 
+def resolved_timeout(case: Case, config: EngineConfig) -> float:
+    """Return the case timeout, or the engine default when the case omitted one."""
+    if case.timeout_seconds is not None:
+        return case.timeout_seconds
+    return config.default_timeout_seconds
+
+
 def execute_case(case: Case, config: EngineConfig) -> RunResult:
     """Run one case under cmd.exe, then evaluate assertions."""
     require_windows()
     started = time.perf_counter()
     warnings = _script_warnings(case)
     encoding = console_encoding()
-    timeout = case.timeout_seconds or config.default_timeout_seconds
+    timeout = resolved_timeout(case, config)
     LOGGER.info(
         "execute_case id=%s script=%s timeout=%s safe_defaults=%s",
         case.case_id,
@@ -181,7 +226,7 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
     )
     with tempfile.TemporaryDirectory(prefix="battest-") as raw_temp:
         work_dir = Path(raw_temp)
-        _seed_work_dir(work_dir, case.copy_paths)
+        _seed_work_dir(work_dir, case.copy_paths, case.source_path.parent)
         mocks = effective_mocks(case.mocks, case.allow, config.safe_defaults)
         mock_dir = write_mock_tree(work_dir, mocks) if mocks else None
         wrapper = work_dir / WRAPPER_NAME

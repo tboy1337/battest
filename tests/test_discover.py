@@ -41,6 +41,51 @@ def test_discover_cases_loads_both_shapes(tmp_path: Path) -> None:
     cases = discover_cases(tmp_path)
     assert len(cases) == 1
     assert cases[0].description == "alpha"
+    assert cases[0].case_id == "alpha"
+
+
+def test_discover_relative_case_ids_are_unique(tmp_path: Path) -> None:
+    script = "@echo off\nexit /b 0\n"
+    for folder in ("a", "b"):
+        nested = tmp_path / folder
+        nested.mkdir()
+        (nested / "hello.cmd").write_text(script, encoding="utf-8")
+        (nested / "hello.battest.yaml").write_text(
+            "description: hello\nscript: hello.cmd\nexpect:\n  exit_code: 0\n",
+            encoding="utf-8",
+        )
+    cases = discover_cases(tmp_path)
+    assert sorted(item.case_id for item in cases) == ["a/hello", "b/hello"]
+
+
+def test_discover_single_file_keeps_stem_id(tmp_path: Path) -> None:
+    nested = tmp_path / "a"
+    nested.mkdir()
+    (nested / "hello.cmd").write_text("@echo off\n", encoding="utf-8")
+    manifest = nested / "hello.battest.yaml"
+    manifest.write_text(
+        "description: hello\nscript: hello.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    cases = discover_cases(manifest)
+    assert [item.case_id for item in cases] == ["hello"]
+
+
+def test_discover_duplicate_case_ids_raise(tmp_path: Path) -> None:
+    (tmp_path / "run.cmd").write_text("@echo off\n", encoding="utf-8")
+    (tmp_path / "dup.battest.yaml").write_text(
+        "description: one\nscript: run.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    case_dir = tmp_path / "dup"
+    case_dir.mkdir()
+    (case_dir / "input.cmd").write_text("@echo off\n", encoding="utf-8")
+    (case_dir / "expect.yaml").write_text(
+        "description: two\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="duplicate case id"):
+        discover_cases(tmp_path)
 
 
 def test_default_root_prefers_tests(
@@ -109,3 +154,13 @@ def test_iter_skips_vendor(tmp_path: Path) -> None:
     path = tmp_path / "one.battest.yaml"
     path.write_text("description: one\nexpect:\n  exit_code: 0\n", encoding="utf-8")
     assert iter_fixture_files(path) == [path]
+
+
+def test_iter_skips_when_root_itself_is_vendor(tmp_path: Path) -> None:
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    (vendor / "hidden.battest.yaml").write_text(
+        "description: hidden\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    assert iter_fixture_files(vendor) == []

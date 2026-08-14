@@ -35,6 +35,14 @@ def test_effective_mocks_disabled() -> None:
     assert effective_mocks({}, [], safe_defaults=False) == {}
 
 
+def test_effective_mocks_skips_internal_safe_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("battest.mocks.SAFE_DEFAULT_COMMANDS", ("del",))
+    merged = effective_mocks({}, [], safe_defaults=True)
+    assert "del" not in merged
+
+
 def test_stub_executable_is_packaged() -> None:
     path = stub_executable()
     assert path.is_file()
@@ -74,6 +82,15 @@ def test_write_mock_tree_sidecars(tmp_path: Path) -> None:
     assert (mock_dir / "net.exit").read_text(encoding="utf-8") == "2"
     assert (mock_dir / "net.stdout").read_text(encoding="utf-8") == "out"
     assert (mock_dir / "net.stderr").read_text(encoding="utf-8") == "err"
+
+
+def test_write_mock_tree_without_call_recording(tmp_path: Path) -> None:
+    mock_dir = write_mock_tree(
+        tmp_path,
+        {"net": MockSpec(exit_code=0, record_calls=False)},
+    )
+    assert (mock_dir / "net.exe").is_file()
+    assert not (mock_dir / "_calls" / "net.log").exists()
 
 
 def test_write_mock_tree_skips_internals(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 # GitHub Action
 
-The composite action in this repository must run on **Windows**.
+The composite action lives at the repository root (`action.yml`) so consumers
+can write `uses: tboy1337/battest@v0.1.0`. It must run on **Windows**.
 
 ```yaml
 jobs:
@@ -23,5 +24,11 @@ Inputs:
 | `safe-defaults` | `true` | Stub destructive externals |
 | `python-version` | `3.14` | Python used to install battest |
 
-The action fails if `RUNNER_OS` is not Windows. JUnit XML is written under
-`$RUNNER_TEMP`.
+Outputs:
+
+| Name | Meaning |
+|---|---|
+| `junit-xml` | Path to the JUnit XML report under `$RUNNER_TEMP` |
+
+The action fails if `RUNNER_OS` is not Windows. Inputs are passed through
+environment variables so they are not interpolated into the PowerShell script.

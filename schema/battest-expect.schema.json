@@ -93,7 +93,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "exit_code": { "type": "integer" },
+        "exit_code": { "type": "integer", "minimum": 0, "maximum": 255 },
         "stdout": { "type": "string" },
         "stderr": { "type": "string" },
         "record_calls": { "type": "boolean" },

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from battest.envsnap import filter_helper_vars, parse_set_output
 
 
@@ -20,14 +22,20 @@ def test_filter_helper_vars() -> None:
     assert env == {"FOO": "1", "Path": "z"}
 
 
-def test_parse_set_output_roundtrip() -> None:
-    mapping = {
-        "FOO": "bar",
-        "EMPTY": "",
-        "EQUALS": "a=b=c",
-        "PATH": r"C:\a;C:\b",
-    }
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {},
+        {"FOO": "bar"},
+        {"EMPTY": ""},
+        {"EQUALS": "a=b=c"},
+        {"PATH": r"C:\a;C:\b"},
+        {"A": "one", "B": "two"},
+        {"SPACES": "hello world"},
+        {"UNICODE": "café"},
+    ],
+)
+def test_parse_set_output_roundtrip(mapping: dict[str, str]) -> None:
     dumped = "\n".join(f"{name}={value}" for name, value in mapping.items())
-    parsed = parse_set_output(dumped)
-    assert parsed == mapping
+    assert parse_set_output(dumped) == mapping
     assert parse_set_output("") == {}
