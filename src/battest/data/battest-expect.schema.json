@@ -63,11 +63,21 @@
         { "required": ["equals_file"] }
       ],
       "not": {
-        "required": ["exists", "not_exists"],
-        "properties": {
-          "exists": { "const": true },
-          "not_exists": { "const": true }
-        }
+        "anyOf": [
+          {
+            "required": ["exists", "not_exists"],
+            "properties": {
+              "exists": { "const": true },
+              "not_exists": { "const": true }
+            }
+          },
+          {
+            "required": ["not_exists"],
+            "properties": {
+              "not_exists": { "const": false }
+            }
+          }
+        ]
       }
     },
     "envExpect": {

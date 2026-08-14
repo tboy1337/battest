@@ -8,7 +8,9 @@ import sys
 import time
 
 import pytest
+from pytest_mock import MockerFixture
 
+from battest.constants import TEARDOWN_MIN_SECONDS
 from battest.encoding import console_encoding, decode_output
 from battest.engine import (
     EngineError,
@@ -17,6 +19,7 @@ from battest.engine import (
     _run_process,
     _script_warnings,
     _seed_work_dir,
+    abandon_lingering_process,
     build_cmd_line,
     cmd_executable,
     collapse_path_keys,
@@ -27,6 +30,7 @@ from battest.engine import (
     remaining_timeout,
     require_windows,
     resolved_timeout,
+    teardown_timeout,
 )
 from battest.mocks import MockError
 from battest.models import (
@@ -49,7 +53,7 @@ def test_decode_output_empty_and_utf8() -> None:
 def test_decode_output_fallback() -> None:
     text = decode_output(b"\xff\xfe h", "utf-8")
     assert isinstance(text, str)
-    assert text != ""
+    assert text
 
 
 def test_console_encoding_is_string() -> None:
@@ -133,6 +137,20 @@ def test_seed_work_dir_copies_directory(tmp_path: Path) -> None:
     work.mkdir()
     _seed_work_dir(work, [fixtures], tmp_path)
     assert (work / "fixtures" / "a.txt").read_text(encoding="utf-8") == "nested"
+
+
+def test_seed_work_dir_overlapping_directories(tmp_path: Path) -> None:
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    (fixtures / "a.txt").write_text("nested", encoding="utf-8")
+    nested = fixtures / "sub"
+    nested.mkdir()
+    (nested / "b.txt").write_text("inner", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    _seed_work_dir(work, [fixtures, nested], tmp_path)
+    assert (work / "fixtures" / "a.txt").read_text(encoding="utf-8") == "nested"
+    assert (work / "fixtures" / "sub" / "b.txt").read_text(encoding="utf-8") == "inner"
 
 
 def test_script_warnings_oserror(
@@ -232,9 +250,7 @@ def test_combined_env_prefixes_mock_and_collapses_path(
     assert env["NoDefaultCurrentDirectoryInEXEPath"] == "1"
 
 
-def test_kill_process_tree_invokes_taskkill(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_kill_process_tree_invokes_taskkill(mocker: MockerFixture) -> None:
     seen: list[list[str]] = []
     timeouts: list[object] = []
 
@@ -245,10 +261,27 @@ def test_kill_process_tree_invokes_taskkill(
         timeouts.append(kwargs.get("timeout"))
         return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    mocker.patch("battest.engine.subprocess.run", fake_run)
     kill_process_tree(1234)
     assert seen[0][:3] == ["taskkill", "/F", "/T"]
     assert timeouts[0] is not None
+
+
+def test_kill_process_tree_logs_nonzero_return(
+    mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    def fake_run(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command, 1, stdout="", stderr="Access denied"
+        )
+
+    mocker.patch("battest.engine.subprocess.run", fake_run)
+    with caplog.at_level("WARNING", logger="battest.engine"):
+        kill_process_tree(55)
+    assert "returned 1" in caplog.text
+    assert "Access denied" in caplog.text
 
 
 def test_kill_process_tree_timeout_is_logged(
@@ -956,14 +989,11 @@ def test_run_process_success_and_timeout(
     class OkProcess:
         pid = 7
         returncode = 3
+        stdin = None
+        stdout = None
+        stderr = None
 
         def __init__(self, *args: object, **kwargs: object) -> None:
-            return None
-
-        def __enter__(self) -> OkProcess:
-            return self
-
-        def __exit__(self, *args: object) -> None:
             return None
 
         def communicate(
@@ -971,6 +1001,15 @@ def test_run_process_success_and_timeout(
         ) -> tuple[bytes, bytes]:
             assert input == b"hi"
             return b"out", b"err"
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 3
+
+        def kill(self) -> None:
+            return None
 
     monkeypatch.setattr("battest.engine.subprocess.Popen", OkProcess)
     exit_code, stdout, stderr, timed_out = _run_process(
@@ -984,20 +1023,28 @@ def test_run_process_success_and_timeout(
     class TimeoutProcess:
         pid = None
         returncode = None
+        stdin = None
+        stdout = None
+        stderr = None
+        waited: list[float | None] = []
 
         def __init__(self, *args: object, **kwargs: object) -> None:
-            return None
-
-        def __enter__(self) -> TimeoutProcess:
-            return self
-
-        def __exit__(self, *args: object) -> None:
             return None
 
         def communicate(
             self, input: bytes | None = None, timeout: float | None = None
         ) -> tuple[bytes, bytes]:
             raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.waited.append(timeout)
+            raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
+
+        def kill(self) -> None:
+            return None
 
     killed: list[int] = []
     monkeypatch.setattr("battest.engine.subprocess.Popen", TimeoutProcess)
@@ -1011,6 +1058,7 @@ def test_run_process_success_and_timeout(
     assert timed_out is True
     assert exit_code == -1
     assert killed == []
+    assert TimeoutProcess.waited
 
 
 def test_run_process_warns_when_stdin_cannot_encode(
@@ -1021,14 +1069,11 @@ def test_run_process_warns_when_stdin_cannot_encode(
     class OkProcess:
         pid = 1
         returncode = 0
+        stdin = None
+        stdout = None
+        stderr = None
 
         def __init__(self, *args: object, **kwargs: object) -> None:
-            return None
-
-        def __enter__(self) -> OkProcess:
-            return self
-
-        def __exit__(self, *args: object) -> None:
             return None
 
         def communicate(
@@ -1037,6 +1082,15 @@ def test_run_process_warns_when_stdin_cannot_encode(
             assert input is not None
             assert b"?" in input
             return b"", b""
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            return None
 
     monkeypatch.setattr("battest.engine.subprocess.Popen", OkProcess)
     with caplog.at_level("WARNING", logger="battest.engine"):
@@ -1152,4 +1206,120 @@ def test_setup_sut_teardown_share_one_deadline(
     assert len(seen) == 3
     assert seen[0] <= 5.0
     assert seen[1] < seen[0]
-    assert seen[2] < seen[1]
+    assert seen[2] >= TEARDOWN_MIN_SECONDS
+
+
+def test_teardown_timeout_never_below_minimum() -> None:
+    assert teardown_timeout(time.perf_counter() - 10.0) == TEARDOWN_MIN_SECONDS
+    future = time.perf_counter() + 30.0
+    assert teardown_timeout(future) >= TEARDOWN_MIN_SECONDS
+
+
+def test_abandon_lingering_process_skips_exited() -> None:
+    class Dead:
+        def poll(self) -> int | None:
+            return 0
+
+        def kill(self) -> None:
+            raise AssertionError("should not kill exited process")
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def communicate(
+            self, input: bytes | None = None, timeout: float | None = None
+        ) -> tuple[bytes, bytes]:
+            return b"", b""
+
+    abandon_lingering_process(Dead())
+
+
+def test_abandon_lingering_process_bounded_wait(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Zombie:
+        killed = False
+
+        def poll(self) -> int | None:
+            return None
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
+
+        def communicate(
+            self, input: bytes | None = None, timeout: float | None = None
+        ) -> tuple[bytes, bytes]:
+            return b"", b""
+
+    zombie = Zombie()
+    with caplog.at_level("ERROR", logger="battest.engine"):
+        abandon_lingering_process(zombie)
+    assert zombie.killed is True
+    assert "abandoning still-alive" in caplog.text
+
+
+def test_deadline_starts_after_prepare(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+    original_prepare = _prepare_work_dir
+
+    def slow_prepare(
+        prepared_case: Case, config: EngineConfig, work_dir: Path
+    ) -> object:
+        time.sleep(0.25)
+        return original_prepare(prepared_case, config, work_dir)
+
+    seen: list[float] = []
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        timeout: float,
+        _encoding: str,
+    ) -> tuple[int, str, str, bool]:
+        seen.append(timeout)
+        return 0, "", "", False
+
+    monkeypatch.setattr("battest.engine._prepare_work_dir", slow_prepare)
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    result = execute_case(case, EngineConfig(default_timeout_seconds=5.0))
+    assert result.outcome == Outcome.PASS
+    assert seen
+    assert seen[0] > 4.7
+
+
+@pytest.mark.windows
+def test_engine_hides_battest_helper_env_from_sut(tmp_path: Path) -> None:
+    case = _write_case(
+        tmp_path,
+        "@echo off\r\necho SUT=%BATTEST_SUT%\r\nexit /b 0\r\n",
+        "\n".join(
+            [
+                "description: hide helper env",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "  stdout:",
+                '    contains: "SUT="',
+            ]
+        ),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.PASS
+    assert "run.cmd" not in result.stdout

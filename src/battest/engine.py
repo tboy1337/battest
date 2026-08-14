@@ -14,7 +14,12 @@ import time
 from typing import Protocol
 
 from battest.assertlib import evaluate_case
-from battest.constants import ENV_DUMP_NAME, KILL_DRAIN_TIMEOUT_SECONDS, WRAPPER_NAME
+from battest.constants import (
+    ENV_DUMP_NAME,
+    KILL_DRAIN_TIMEOUT_SECONDS,
+    TEARDOWN_MIN_SECONDS,
+    WRAPPER_NAME,
+)
 from battest.encoding import console_encoding, decode_output
 from battest.envsnap import filter_helper_vars, parse_set_output
 from battest.logging_config import get_logger
@@ -43,10 +48,14 @@ class PreparedWork:
 
 
 _WRAPPER_TEMPLATE = """@echo off
-call "%BATTEST_SUT%" %*
-set BATTEST_RC=%ERRORLEVEL%
-set > "%BATTEST_ENVFILE%"
-exit /b %BATTEST_RC%
+set "_bt_sut=%BATTEST_SUT%"
+set "_bt_env=%BATTEST_ENVFILE%"
+set BATTEST_SUT=
+set BATTEST_ENVFILE=
+call "%_bt_sut%" %*
+set "_bt_rc=%ERRORLEVEL%"
+set > "%_bt_env%"
+exit /b %_bt_rc%
 """
 
 
@@ -68,6 +77,12 @@ class TerminableProcess(Protocol):
 
     def kill(self) -> None:
         """Forcibly terminate the process."""
+
+    def poll(self) -> int | None:
+        """Return the exit code when the process has exited, else None."""
+
+    def wait(self, timeout: float | None = None) -> int:
+        """Wait for the process to exit, optionally bounded by timeout."""
 
 
 def require_windows() -> None:
@@ -95,7 +110,7 @@ def kill_process_tree(pid: int) -> None:
     """Kill a process and its descendants on Windows."""
     LOGGER.warning("killing process tree pid=%s", pid)
     try:
-        subprocess.run(
+        completed = subprocess.run(
             ["taskkill", "/F", "/T", "/PID", str(pid)],
             check=False,
             capture_output=True,
@@ -104,6 +119,14 @@ def kill_process_tree(pid: int) -> None:
         )
     except subprocess.TimeoutExpired:
         LOGGER.error("taskkill timed out for pid=%s", pid)
+        return
+    if completed.returncode != 0:
+        LOGGER.warning(
+            "taskkill pid=%s returned %s stderr=%s",
+            pid,
+            completed.returncode,
+            completed.stderr,
+        )
 
 
 def drain_after_timeout(
@@ -122,6 +145,29 @@ def drain_after_timeout(
             return b"", b""
 
 
+def abandon_lingering_process(process: TerminableProcess) -> None:
+    """Kill and wait with a bound; never block forever if the child survives."""
+    if process.poll() is not None:
+        return
+    LOGGER.error("process still running after drain; killing and abandoning")
+    process.kill()
+    try:
+        process.wait(timeout=KILL_DRAIN_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        LOGGER.error("abandoning still-alive process after wait timeout")
+
+
+def _close_process_streams(process: subprocess.Popen[bytes]) -> None:
+    # subprocess type stubs expose stdio as IO[Any]; closing is still required.
+    for stream in (process.stdin, process.stdout, process.stderr):  # type: ignore[misc]
+        if stream is None:  # type: ignore[misc]
+            continue
+        try:
+            stream.close()  # type: ignore[misc]
+        except OSError:
+            LOGGER.debug("failed to close process stream", exc_info=True)
+
+
 def _seed_work_dir(work_dir: Path, copy_paths: list[Path], base_dir: Path) -> None:
     resolved_base = base_dir.resolve()
     for source in copy_paths:
@@ -130,7 +176,7 @@ def _seed_work_dir(work_dir: Path, copy_paths: list[Path], base_dir: Path) -> No
         destination.parent.mkdir(parents=True, exist_ok=True)
         LOGGER.debug("seeding %s -> %s", source, destination)
         if source.is_dir():
-            shutil.copytree(source, destination)
+            shutil.copytree(source, destination, dirs_exist_ok=True)
         else:
             shutil.copy2(source, destination)
 
@@ -150,7 +196,8 @@ def _run_process(
     stdout_bytes = b""
     stderr_bytes = b""
     exit_code = -1
-    with subprocess.Popen(
+    # Popen.__exit__ waits forever; after timeout we must bound that wait ourselves.
+    process = subprocess.Popen(  # pylint: disable=consider-using-with
         command,
         cwd=str(cwd),
         env=env,
@@ -158,7 +205,8 @@ def _run_process(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=creationflags,
-    ) as process:
+    )
+    try:
         try:
             stdout_bytes, stderr_bytes = process.communicate(
                 input=stdin_bytes,
@@ -172,7 +220,12 @@ def _run_process(
             stdout_bytes, stderr_bytes = drain_after_timeout(
                 process, KILL_DRAIN_TIMEOUT_SECONDS
             )
+            abandon_lingering_process(process)
         exit_code = process.returncode if process.returncode is not None else -1
+    finally:
+        _close_process_streams(process)
+        if process.poll() is None:
+            abandon_lingering_process(process)
     stdout = decode_output(stdout_bytes or b"", encoding)
     stderr = decode_output(stderr_bytes or b"", encoding)
     LOGGER.info(
@@ -236,6 +289,11 @@ def resolved_timeout(case: Case, config: EngineConfig) -> float:
 def remaining_timeout(deadline: float) -> float:
     """Seconds left until deadline, never negative."""
     return max(0.0, deadline - time.perf_counter())
+
+
+def teardown_timeout(deadline: float) -> float:
+    """Seconds for teardown: remaining budget, never below TEARDOWN_MIN_SECONDS."""
+    return max(remaining_timeout(deadline), TEARDOWN_MIN_SECONDS)
 
 
 def _encode_stdin(stdin_text: str, encoding: str) -> bytes | None:
@@ -530,7 +588,7 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
         except (OSError, MockError) as exc:
             LOGGER.error("case %s failed before execution: %s", case.case_id, exc)
             return _error_result(case, started, warnings, str(exc))
-        deadline = started + timeout
+        deadline = time.perf_counter() + timeout
         result = _run_sut(
             case,
             config,
@@ -546,7 +604,7 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
             case,
             work_dir,
             prepared.env,
-            remaining_timeout(deadline),
+            teardown_timeout(deadline),
             encoding,
             prepared.teardown_path,
         )

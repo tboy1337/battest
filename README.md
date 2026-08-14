@@ -13,10 +13,10 @@ AGPL-3.0-or-later.
 
 ## Five-minute start
 
-1. Install:
+1. Install from git until a PyPI release is published:
 
 ```text
-pip install battest
+pip install git+https://github.com/tboy1337/battest.git
 ```
 
 2. Create `hello.cmd`:

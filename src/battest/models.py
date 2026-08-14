@@ -33,7 +33,7 @@ class OutputMatcher(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     equals: str | None = None
-    equals_file: str | None = None
+    equals_file: str | None = Field(default=None, min_length=1)
     contains: str | None = None
     regex: str | None = None
     empty: bool | None = None
@@ -53,6 +53,8 @@ class OutputMatcher(BaseModel):
 
     def has_constraint(self) -> bool:
         """Return True when at least one comparison is configured."""
+        if self.newline != NewlineMode.AUTO:
+            return True
         return any(
             value is not None
             for value in (
@@ -75,11 +77,13 @@ class FileMatcher(BaseModel):
     not_exists: bool | None = None
     contains: str | None = None
     equals: str | None = None
-    equals_file: str | None = None
+    equals_file: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def reject_conflicting_existence(self) -> FileMatcher:
         """Reject exists and not_exists both set to True."""
+        if self.not_exists is False:
+            raise ValueError("not_exists must be true when set")
         if self.exists is True and self.not_exists is True:
             raise ValueError("file matcher cannot set both exists and not_exists")
         if (
@@ -205,7 +209,7 @@ class ParamOverlay(BaseModel):
         """Normalize overlay mock command names to lowercase."""
         if value is None:
             return None
-        return {name.lower(): spec for name, spec in value.items()}
+        return lowercase_mock_mapping(value)
 
 
 class CaseDocument(BaseModel):
@@ -240,7 +244,7 @@ class CaseDocument(BaseModel):
     @classmethod
     def lowercase_mock_keys(cls, value: dict[str, MockSpec]) -> dict[str, MockSpec]:
         """Normalize mock command names to lowercase."""
-        return {name.lower(): spec for name, spec in value.items()}
+        return lowercase_mock_mapping(value)
 
 
 class Case(BaseModel):
@@ -305,6 +309,17 @@ class EngineConfig(BaseModel):
     max_diff: int = Field(default=2000, ge=1)
     jobs: int = Field(default=1, ge=1)
     default_timeout_seconds: float = Field(default=30.0, gt=0)
+
+
+def lowercase_mock_mapping(value: dict[str, MockSpec]) -> dict[str, MockSpec]:
+    """Lowercase mock command names and reject case-insensitive duplicates."""
+    lowered: dict[str, MockSpec] = {}
+    for name, spec in value.items():
+        key = name.lower()
+        if key in lowered:
+            raise ValueError(f"duplicate mock command name {name!r} (case-insensitive)")
+        lowered[key] = spec
+    return lowered
 
 
 def merge_expect(base: Expect, overlay: Expect | None) -> Expect:

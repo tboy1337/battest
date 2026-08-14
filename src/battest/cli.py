@@ -12,7 +12,6 @@ from battest.constants import DEFAULT_MAX_DIFF, DEFAULT_TIMEOUT_SECONDS
 from battest.discover import default_root, discover_cases
 from battest.engine import EngineError, execute_cases, require_windows
 from battest.logging_config import configure_logging, get_logger
-from battest.mocks import MockError
 from battest.models import EngineConfig
 from battest.report import exit_status, render_console, write_junit_xml
 from battest.schema import SchemaError
@@ -127,10 +126,6 @@ def _run_command(args: argparse.Namespace) -> int:
     try:
         results = execute_cases(cases, config)
     except EngineError as exc:
-        LOGGER.error("%s", exc)
-        print(str(exc), file=sys.stderr)
-        return 2
-    except MockError as exc:
         LOGGER.error("%s", exc)
         print(str(exc), file=sys.stderr)
         return 2

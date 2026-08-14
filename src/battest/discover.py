@@ -48,12 +48,7 @@ def iter_fixture_files(root: Path) -> list[Path]:
     found: list[Path] = []
     try:
         LOGGER.debug("walking discovery path %s", root)
-        walker = os.walk(root, onerror=_log_walk_error)
-    except OSError as exc:
-        LOGGER.error("cannot walk discovery path %s: %s", root, exc)
-        return []
-    try:
-        for dirpath, dir_names, file_names in walker:
+        for dirpath, dir_names, file_names in os.walk(root, onerror=_log_walk_error):
             current_dir = Path(dirpath)
             dir_names[:] = [
                 name for name in dir_names if name not in DISCOVERY_SKIP_DIR_NAMES
@@ -69,6 +64,8 @@ def iter_fixture_files(root: Path) -> list[Path]:
                     found.append(path)
     except OSError as exc:
         LOGGER.error("cannot walk discovery path %s: %s", root, exc)
+        if not found:
+            return []
     unique = sorted(set(found))
     LOGGER.info("discovered %s fixture file(s) under %s", len(unique), root)
     return unique

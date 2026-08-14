@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from typing import Never
 
+from battest.constants import DEFAULT_MAX_DIFF
 from battest.logging_config import get_logger
 from battest.models import (
     AssertionFailure,
@@ -104,20 +105,29 @@ def confined_work_path(work_dir: Path, relative: str) -> Path | None:
     return candidate
 
 
+def _clip(text: str | None, max_diff: int) -> str | None:
+    if text is None:
+        return None
+    if len(text) <= max_diff:
+        return text
+    return text[:max_diff] + "\n... (truncated)"
+
+
 def _fail(
     kind: str,
     message: str,
     expected: str | None = None,
     actual: str | None = None,
     diff: str | None = None,
+    max_diff: int = DEFAULT_MAX_DIFF,
 ) -> AssertionFailure:
     LOGGER.debug("assertion failure kind=%s message=%s", kind, message)
     return AssertionFailure(
         kind=kind,
         message=message,
-        expected=expected,
-        actual=actual,
-        diff=diff,
+        expected=_clip(expected, max_diff),
+        actual=_clip(actual, max_diff),
+        diff=_clip(diff, max_diff),
     )
 
 
@@ -144,6 +154,7 @@ def match_output(
                 expected="",
                 actual=actual,
                 diff=unified_diff_text("", actual_cmp, max_diff),
+                max_diff=max_diff,
             )
         )
     if matcher.empty is False and actual_cmp.strip() == "":
@@ -158,6 +169,7 @@ def match_output(
                     expected=matcher.equals,
                     actual=actual,
                     diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+                    max_diff=max_diff,
                 )
             )
     if matcher.equals_file is not None:
@@ -168,6 +180,7 @@ def match_output(
                     stream_name,
                     f"{stream_name} {error}",
                     expected=matcher.equals_file,
+                    max_diff=max_diff,
                 )
             )
         else:
@@ -181,6 +194,7 @@ def match_output(
                         expected=expected_text,
                         actual=actual,
                         diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+                        max_diff=max_diff,
                     )
                 )
     if matcher.contains is not None:
@@ -192,6 +206,7 @@ def match_output(
                     f"{stream_name} did not contain expected text",
                     expected=matcher.contains,
                     actual=actual,
+                    max_diff=max_diff,
                 )
             )
     if matcher.regex is not None:
@@ -205,6 +220,7 @@ def match_output(
                     f"{stream_name} invalid regex: {exc}",
                     expected=matcher.regex,
                     actual=actual,
+                    max_diff=max_diff,
                 )
             )
         else:
@@ -215,6 +231,7 @@ def match_output(
                         f"{stream_name} did not match regex",
                         expected=matcher.regex,
                         actual=actual,
+                        max_diff=max_diff,
                     )
                 )
     return failures
@@ -295,9 +312,10 @@ def match_files(
             )
             continue
         exists = path.is_file() or path.is_dir()
+        missing = matcher.exists is False or matcher.not_exists is True
         if matcher.exists is True and not exists:
             failures.append(_fail("files", f"expected path to exist: {matcher.path}"))
-        if matcher.not_exists is True and exists:
+        if missing and exists:
             failures.append(
                 _fail("files", f"expected path to be absent: {matcher.path}")
             )
@@ -329,6 +347,7 @@ def match_files(
                         f"file {matcher.path} did not contain expected text",
                         expected=matcher.contains,
                         actual=text,
+                        max_diff=max_diff,
                     )
                 )
             if matcher.equals is not None and text != matcher.equals:
@@ -339,6 +358,7 @@ def match_files(
                         expected=matcher.equals,
                         actual=text,
                         diff=unified_diff_text(matcher.equals, text, max_diff),
+                        max_diff=max_diff,
                     )
                 )
             if matcher.equals_file is not None:
@@ -346,7 +366,7 @@ def match_files(
                     source_dir, matcher.equals_file
                 )
                 if error is not None:
-                    failures.append(_fail("files", error))
+                    failures.append(_fail("files", error, max_diff=max_diff))
                     continue
                 assert expected_text is not None
                 if text != expected_text:
@@ -357,6 +377,7 @@ def match_files(
                             expected=expected_text,
                             actual=text,
                             diff=unified_diff_text(expected_text, text, max_diff),
+                            max_diff=max_diff,
                         )
                     )
     return failures
@@ -365,13 +386,14 @@ def match_files(
 def match_mock_calls(
     mocks: dict[str, MockSpec],
     recorded: dict[str, list[str]],
+    max_diff: int = DEFAULT_MAX_DIFF,
 ) -> list[AssertionFailure]:
     """Evaluate expect_calls against recorded PATH-stub argv lines."""
     failures: list[AssertionFailure] = []
     for name, spec in mocks.items():
         lines = recorded.get(name.lower(), [])
         for expectation in spec.expect_calls:
-            failures.extend(_match_one_call(name, expectation, lines))
+            failures.extend(_match_one_call(name, expectation, lines, max_diff))
     return failures
 
 
@@ -379,6 +401,7 @@ def _match_one_call(
     name: str,
     expectation: CallExpectation,
     lines: list[str],
+    max_diff: int,
 ) -> list[AssertionFailure]:
     if expectation.not_called is True:
         if lines:
@@ -388,6 +411,7 @@ def _match_one_call(
                     f"expected {name} not to be called",
                     expected="",
                     actual="\n".join(lines),
+                    max_diff=max_diff,
                 )
             ]
         return []
@@ -400,6 +424,7 @@ def _match_one_call(
                     f"{name} was not called with arguments containing {needle!r}",
                     expected=needle,
                     actual="\n".join(lines),
+                    max_diff=max_diff,
                 )
             ]
     return []
@@ -428,6 +453,6 @@ def evaluate_case(
     )
     failures.extend(match_env(case.expect.env, env))
     failures.extend(match_files(case.expect.files, work_dir, source_dir, max_diff))
-    failures.extend(match_mock_calls(case.mocks, mock_calls))
+    failures.extend(match_mock_calls(case.mocks, mock_calls, max_diff))
     LOGGER.info("assertion failures case_id=%s count=%s", case.case_id, len(failures))
     return failures

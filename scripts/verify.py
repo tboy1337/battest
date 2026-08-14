@@ -137,6 +137,20 @@ def build_steps(
         ([python, "-m", "pytest"], skip_tests),
         ([python, "scripts/check_coverage.py"], skip_tests),
         (
+            [python, "scripts/build_stub.py"],
+            skip_tests or sys.platform != "win32",
+        ),
+        (
+            [
+                "git",
+                "diff",
+                "--exit-code",
+                "--",
+                "src/battest/data/battest_stub.exe",
+            ],
+            skip_tests or sys.platform != "win32",
+        ),
+        (
             [
                 cargo,
                 "test",

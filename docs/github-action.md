@@ -1,8 +1,9 @@
 # GitHub Action
 
 The composite action lives at the repository root (`action.yml`) so consumers
-can write `uses: tboy1337/battest@v0.1.0` after that tag is published. It must
-run on **Windows**. Pin a published release tag rather than a floating branch.
+can write `uses: tboy1337/battest@main` today. Pin a published release tag
+(for example `@v0.1.0`) rather than a floating branch once that tag exists.
+It must run on a **Windows** runner (`runs-on: windows-*`).
 
 ```yaml
 jobs:
@@ -11,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: battest
-        uses: tboy1337/battest@v0.1.0
+        uses: tboy1337/battest@main
         with:
           path: tests
           safe-defaults: "true"

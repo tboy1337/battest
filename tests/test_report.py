@@ -115,6 +115,29 @@ def test_unhandled_outcome_in_reports(
         render_console([bogus], StringIO())
 
 
+def test_failure_block_truncates_huge_actual() -> None:
+    huge = "y" * 5000
+    stream = StringIO()
+    result = RunResult(
+        case_id="big",
+        description="desc",
+        outcome=Outcome.FAIL,
+        failures=[
+            AssertionFailure(
+                kind="stdout",
+                message="mismatch",
+                expected="short",
+                actual=huge,
+            )
+        ],
+        duration_seconds=0.01,
+    )
+    render_console([result], stream)
+    text = stream.getvalue()
+    assert "truncated" in text
+    assert huge not in text
+
+
 def test_write_junit_xml(tmp_path: Path) -> None:
     path = tmp_path / "out" / "junit.xml"
     write_junit_xml(

@@ -719,6 +719,107 @@ def test_file_matcher_requires_constraint() -> None:
         )
 
 
+def test_file_matcher_rejects_not_exists_false() -> None:
+    with pytest.raises(ValidationError, match="not_exists"):
+        FileMatcher(path="out.txt", not_exists=False)
+
+
+def test_equals_file_rejects_empty_string() -> None:
+    with pytest.raises(ValidationError):
+        OutputMatcher(equals_file="")
+    with pytest.raises(ValidationError):
+        FileMatcher(path="out.txt", equals_file="")
+
+
+def test_duplicate_mock_keys_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="duplicate mock"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "mocks": {
+                    "IPCONFIG": {"exit_code": 0},
+                    "ipconfig": {"exit_code": 1},
+                },
+            }
+        )
+
+
+def test_params_overlay_lowercases_mock_keys(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: overlay mocks",
+                "script: run.cmd",
+                "mocks:",
+                "  net:",
+                "    exit_code: 0",
+                "expect:",
+                "  exit_code: 0",
+                "params:",
+                "  - id: flush",
+                "    mocks:",
+                "      IPCONFIG:",
+                "        exit_code: 7",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    overlay = cases[1]
+    assert "ipconfig" in overlay.mocks
+    assert overlay.mocks["ipconfig"].exit_code == 7
+    assert "net" in overlay.mocks
+
+
+def test_params_overlay_duplicate_mock_keys_rejected(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: overlay dup",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "params:",
+                "  - id: flush",
+                "    mocks:",
+                "      IPCONFIG:",
+                "        exit_code: 0",
+                "      ipconfig:",
+                "        exit_code: 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="duplicate mock"):
+        load_cases_from_path(manifest)
+
+
+def test_allow_internal_command_warns(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: allow internal",
+                "script: run.cmd",
+                "allow:",
+                "  - del",
+                "expect:",
+                "  exit_code: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    assert cases[0].warnings
+    assert any("cannot be PATH-mocked" in item for item in cases[0].warnings)
+
+
 def test_engine_config_max_diff_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         EngineConfig(max_diff=0)

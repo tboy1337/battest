@@ -1,5 +1,5 @@
 name: battest
-description: Run battest Windows batch runtime tests. The job must use windows-latest.
+description: Run battest Windows batch runtime tests. Requires a Windows runner.
 author: tboy1337
 inputs:
   path:
@@ -29,7 +29,7 @@ runs:
       shell: pwsh
       run: |
         if ($env:RUNNER_OS -ne "Windows") {
-          throw "battest requires a Windows runner (runs-on: windows-latest). Current RUNNER_OS=$env:RUNNER_OS"
+          throw "battest requires a Windows runner (runs-on: windows-*). Current RUNNER_OS=$env:RUNNER_OS"
         }
 
     - name: Set up Python

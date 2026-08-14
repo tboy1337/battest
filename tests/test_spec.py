@@ -106,6 +106,8 @@ def test_packaged_data_path_survives_as_file_cleanup(
         assert not ephemeral.exists()
         assert path.is_file()
         assert path.read_text(encoding="utf-8") == "ok: 1\n"
+        cached = packaged_data_path("gone.yaml")
+        assert cached == path
     finally:
         created = spec_mod._EXTRACT_ROOT
         spec_mod._EXTRACT_ROOT = previous_root

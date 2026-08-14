@@ -84,6 +84,15 @@ def test_lf_mode_rejects_cr() -> None:
     assert "CR bytes" in crlf_actual[0].message
 
 
+def test_newline_only_matcher_enforces_line_endings() -> None:
+    matcher = OutputMatcher(newline=NewlineMode.LF)
+    assert matcher.has_constraint() is True
+    failures = match_output("stdout", matcher, "hello\r\n", Path("."), 200)
+    assert failures
+    assert "CR bytes" in failures[0].message
+    assert match_output("stdout", matcher, "hello\n", Path("."), 200) == []
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -372,6 +381,65 @@ def test_match_files_content_checks(tmp_path: Path) -> None:
         200,
     )
     assert "did not equal" in equals_file_miss[0].message
+
+
+def test_match_files_exists_false_means_absent(tmp_path: Path) -> None:
+    (tmp_path / "present.txt").write_text("x", encoding="utf-8")
+    absent_ok = match_files(
+        [FileMatcher(path="gone.txt", exists=False)],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert absent_ok == []
+    present_fail = match_files(
+        [FileMatcher(path="present.txt", exists=False)],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert present_fail
+    assert "absent" in present_fail[0].message
+
+
+def test_read_equals_file_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    golden = tmp_path / "golden.txt"
+    golden.write_text("expected", encoding="utf-8")
+    original = Path.read_text
+
+    def boom(self: Path, *args: object, **kwargs: object) -> str:
+        if self.resolve() == golden.resolve():
+            raise OSError("locked-golden")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", boom)
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals_file="golden.txt"),
+        "expected",
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "equals_file unreadable" in failures[0].message
+    assert "locked-golden" in failures[0].message
+
+
+def test_match_output_truncates_large_actual() -> None:
+    huge = "x" * 5000
+    failures = match_output(
+        "stdout",
+        OutputMatcher(contains="missing"),
+        huge,
+        Path("."),
+        40,
+    )
+    assert failures
+    assert failures[0].actual is not None
+    assert len(failures[0].actual) < 80
+    assert "truncated" in failures[0].actual
 
 
 def test_match_files_read_oserror(

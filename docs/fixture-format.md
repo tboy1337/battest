@@ -61,11 +61,16 @@ setup, or teardown still need `copy:`. `equals_file` paths are likewise
 confined to the fixture directory (absolute paths and `..` escapes are
 rejected).
 
-`setup` runs before the script under test. Setup, the script, and teardown
-share one wall-clock timeout. Assertions (exit code, output, env,
-files, mock calls) run against the work directory **before** `teardown`.
+`setup` runs before the script under test. The case timeout starts after
+workdir prep (copying fixtures and PATH stubs). Setup, the script, and
+teardown share the remaining wall-clock budget. After the budget expires,
+teardown still runs with at least five seconds. Assertions (exit code, output,
+env, files, mock calls) run against the work directory **before** `teardown`.
 `teardown` always runs when it is set, including after a failed `setup`. A
-failing teardown turns an otherwise passing case into `ERROR`.
+failing teardown turns an otherwise passing case into `ERROR`. Mock command
+names are case-insensitive; duplicate names such as `IPCONFIG` and `ipconfig`
+in the same mapping are a schema error. `exists: false` means the path must be
+absent (same as `not_exists: true`). `not_exists: false` is rejected.
 
 ## Case directory
 
@@ -88,7 +93,9 @@ LF to CRLF so authors can write logical lines. Invalid `regex` patterns are a
 schema error. `regex` is matched against newline-normalized captured text; the
 pattern itself is not rewritten. A non-UTF-8 `equals_file` is a case failure,
 not a runner crash. Each `files` entry must set at least one of `exists`,
-`not_exists`, `contains`, `equals`, or `equals_file`.
+`not_exists`, `contains`, `equals`, or `equals_file`. `exists: false` asserts
+absence. A matcher with only `newline: lf` or `newline: crlf` still enforces
+those line endings.
 
 ## Environment matchers
 

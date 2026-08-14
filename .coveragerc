@@ -19,7 +19,7 @@ omit =
 branch = True
 concurrency = thread,multiprocessing
 data_file = .coverage
-parallel = False
+parallel = True
 relative_files = True
 
 [report]

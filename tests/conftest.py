@@ -13,23 +13,18 @@ ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_packaged_data() -> None:
-    """Copy batch-spec catalogs into the package data directory once per session."""
+    """Fail the session when packaged catalogs drift from vendor data."""
     script = ROOT / "scripts" / "generate_spec_data.py"
     completed = subprocess.run(
-        [sys.executable, str(script)],
+        [sys.executable, str(script), "--check"],
         check=False,
         capture_output=True,
         text=True,
     )
     if completed.returncode != 0:
         raise RuntimeError(
-            f"generate_spec_data failed: {completed.stdout}\n{completed.stderr}"
+            f"generate_spec_data --check failed: {completed.stdout}\n{completed.stderr}"
         )
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    """Register custom markers."""
-    config.addinivalue_line("markers", "windows: requires Windows cmd.exe")
 
 
 def pytest_collection_modifyitems(

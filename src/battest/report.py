@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Never, TextIO
 import xml.etree.ElementTree as element_tree
 
+from battest.constants import DEFAULT_MAX_DIFF
 from battest.logging_config import get_logger
 from battest.models import AssertionFailure, Outcome, RunResult
 
@@ -28,15 +29,21 @@ def outcome_handled(outcome: Outcome) -> str:
             raise ValueError(f"unhandled outcome: {unreachable}")
 
 
+def _clip_report(text: str, max_diff: int = DEFAULT_MAX_DIFF) -> str:
+    if len(text) <= max_diff:
+        return text
+    return text[:max_diff] + "\n... (truncated)"
+
+
 def _failure_block(failures: list[AssertionFailure]) -> str:
     lines: list[str] = []
     for failure in failures:
         lines.append(f"{failure.kind}: {failure.message}")
         if failure.diff:
-            lines.append(failure.diff.rstrip())
+            lines.append(_clip_report(failure.diff.rstrip()))
         elif failure.expected is not None or failure.actual is not None:
-            lines.append(f"  expected: {failure.expected!r}")
-            lines.append(f"  actual:   {failure.actual!r}")
+            lines.append(f"  expected: {_clip_report(repr(failure.expected))}")
+            lines.append(f"  actual:   {_clip_report(repr(failure.actual))}")
     return "\n".join(lines)
 
 

@@ -98,17 +98,14 @@ pub fn read_exit_code(path: &Path) -> u8 {
     text.trim().parse::<u8>().unwrap_or(0)
 }
 
-/// Append a single argv line to the call log, creating parent directories.
+/// Append a single argv line to an existing call log.
 pub fn append_args(log_path: &Path, args: &[String]) -> io::Result<()> {
     if let Some(parent) = log_path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)?;
         }
     }
-    let mut log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path)?;
+    let mut log_file = OpenOptions::new().append(true).open(log_path)?;
     writeln!(log_file, "{}", encode_argv_json(args))?;
     Ok(())
 }
@@ -327,6 +324,8 @@ mod tests {
     fn append_args_creates_log_and_appends() {
         let dir = make_temp_dir();
         let log_path = call_log_path(&dir, "ipconfig");
+        fs::create_dir_all(log_path.parent().expect("log parent")).expect("calls dir");
+        fs::write(&log_path, "").expect("create log");
         append_args(&log_path, &["/flushdns".to_owned()]).expect("first append");
         append_args(&log_path, &["/all".to_owned(), "/x".to_owned()]).expect("second");
         append_args(&log_path, &[]).expect("empty argv");
@@ -337,11 +336,21 @@ mod tests {
     }
 
     #[test]
+    fn append_args_does_not_create_missing_log() {
+        let dir = make_temp_dir();
+        let log_path = call_log_path(&dir, "ipconfig");
+        assert!(append_args(&log_path, &["/flushdns".to_owned()]).is_err());
+        assert!(!log_path.exists());
+        remove_temp_dir(&dir);
+    }
+
+    #[test]
     fn append_args_filename_only_writes_in_cwd() {
         let dir = make_temp_dir();
         let previous = env::current_dir().expect("cwd");
         let _restore = RestoreCwd(previous.clone());
         env::set_current_dir(&dir).expect("chdir");
+        fs::write("flat.log", "").expect("create log");
         append_args(Path::new("flat.log"), &["z".to_owned()])
             .expect("append filename-only");
         let text = fs::read_to_string(dir.join("flat.log")).expect("read");

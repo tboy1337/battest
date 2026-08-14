@@ -15,8 +15,12 @@ Mitigations that **are** included:
   `diskpart`, `bcdedit`, `cipher`, `netsh`, `takeown`, and `wmic`. This is a
   deny list of common destructive externals, not a sandbox. The CLI default is
   off; the GitHub Action default is on.
-- A single wall-clock timeout shared across setup, the script under test, and
-  teardown (`taskkill /T` on expiry)
+- A single wall-clock timeout that starts after workdir prep (seeding and PATH
+  stubs). Setup, the script under test, and teardown share that remaining
+  budget. After expiry, teardown still gets at least five seconds.
+- `taskkill /T` on timeout, then a bounded wait so a surviving child cannot
+  hang the runner
+- Helper `BATTEST_*` variables are cleared before the script under test runs
 - Warnings for cmd internals used with absolute paths
 
 Mitigations that **are not** included:

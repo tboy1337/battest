@@ -12,7 +12,6 @@ import yaml
 from battest.api import load_case, run_case, run_cases
 from battest.cli import build_parser, main
 from battest.engine import EngineError
-from battest.mocks import MockError
 from battest.models import Case, EngineConfig, Expect, Outcome, RunResult
 
 
@@ -213,24 +212,6 @@ def test_main_execute_engine_error(
     assert main(["run", str(tmp_path), "--verbose", "--include-spec-exec"]) == 2
 
 
-def test_main_execute_mock_error(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    script = tmp_path / "input.cmd"
-    script.write_text("@echo off\n", encoding="utf-8")
-    (tmp_path / "ok.battest.yaml").write_text(
-        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
-
-    def boom(_cases: list[Case], _config: EngineConfig) -> list[RunResult]:
-        raise MockError("battest_stub.exe is missing")
-
-    monkeypatch.setattr("battest.cli.execute_cases", boom)
-    assert main(["run", str(tmp_path)]) == 2
-
-
 def test_main_junit_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     script = tmp_path / "input.cmd"
     script.write_text("@echo off\n", encoding="utf-8")
@@ -291,6 +272,31 @@ def test_run_case_and_run_cases_require_windows(
         run_case(case)
     with pytest.raises(EngineError):
         run_cases([case], jobs=2)
+
+
+@pytest.mark.windows
+def test_run_case_success_on_windows(tmp_path: Path) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\r\necho api-ok\r\nexit /b 0\r\n", encoding="utf-8")
+    manifest = tmp_path / "ok.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: api success",
+                "script: input.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "  stdout:",
+                "    contains: api-ok",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_case(manifest)
+    result = run_case(cases[0])
+    assert result.outcome == Outcome.PASS
+    results = run_cases(cases)
+    assert results[0].outcome == Outcome.PASS
 
 
 def test_root_action_yml_is_composite() -> None:
