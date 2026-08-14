@@ -89,13 +89,16 @@ fn push_json_string(out: &mut String, value: &str) {
     out.push('"');
 }
 
-/// Read an exit code from a sidecar file. Missing or invalid files yield `0`.
-#[must_use]
-pub fn read_exit_code(path: &Path) -> u8 {
-    let Ok(text) = fs::read_to_string(path) else {
-        return 0;
-    };
-    text.trim().parse::<u8>().unwrap_or(0)
+/// Read an exit code from a sidecar file.
+///
+/// Missing files and invalid content yield `Ok(0)`. An existing sidecar that
+/// cannot be read (permission, directory, non-UTF-8) yields `Err`.
+pub fn read_exit_code(path: &Path) -> io::Result<u8> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text.trim().parse::<u8>().unwrap_or(0)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(0),
+        Err(err) => Err(err),
+    }
 }
 
 /// Append a single argv line to an existing call log.
@@ -145,7 +148,7 @@ pub fn run_with(
     {
         return 1;
     }
-    read_exit_code(&sidecar(&context.directory, &context.stem, "exit"))
+    read_exit_code(&sidecar(&context.directory, &context.stem, "exit")).unwrap_or(1)
 }
 
 /// Run the stub for `current` executable and `args`.
@@ -277,19 +280,22 @@ mod tests {
     fn read_exit_code_missing_invalid_and_valid() {
         let dir = make_temp_dir();
         let missing = dir.join("missing.exit");
-        assert_eq!(read_exit_code(&missing), 0);
+        assert_eq!(read_exit_code(&missing).expect("missing"), 0);
         let invalid = dir.join("bad.exit");
         fs::write(&invalid, "nope\n").expect("write invalid");
-        assert_eq!(read_exit_code(&invalid), 0);
+        assert_eq!(read_exit_code(&invalid).expect("invalid"), 0);
         let overflow = dir.join("overflow.exit");
         fs::write(&overflow, "256").expect("write overflow");
-        assert_eq!(read_exit_code(&overflow), 0);
+        assert_eq!(read_exit_code(&overflow).expect("overflow"), 0);
         let empty = dir.join("empty.exit");
         fs::write(&empty, "   \n").expect("write empty");
-        assert_eq!(read_exit_code(&empty), 0);
+        assert_eq!(read_exit_code(&empty).expect("empty"), 0);
         let valid = dir.join("ok.exit");
         fs::write(&valid, "  2 \n").expect("write valid");
-        assert_eq!(read_exit_code(&valid), 2);
+        assert_eq!(read_exit_code(&valid).expect("valid"), 2);
+        let unreadable = dir.join("dir.exit");
+        fs::create_dir_all(&unreadable).expect("exit dir");
+        assert!(read_exit_code(&unreadable).is_err());
         remove_temp_dir(&dir);
     }
 
@@ -432,6 +438,17 @@ mod tests {
             &mut ignored_err,
         );
         assert_eq!(failed, 1);
+
+        fs::create_dir_all(dir.join("exitdir.exit")).expect("exit sidecar dir");
+        let mut exit_out = Vec::new();
+        let mut exit_err = Vec::new();
+        let exit_failed = run_with(
+            &dir.join("exitdir.exe"),
+            &["z".to_owned()],
+            &mut exit_out,
+            &mut exit_err,
+        );
+        assert_eq!(exit_failed, 1);
         remove_temp_dir(&dir);
     }
 
@@ -456,10 +473,5 @@ mod tests {
         let code = run_from(Ok(exe), &["/x".to_owned()]);
         assert_eq!(code, 7);
         remove_temp_dir(&dir);
-    }
-
-    #[test]
-    fn run_wrapper_without_sidecars() {
-        let _ = super::run();
     }
 }

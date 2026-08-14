@@ -348,6 +348,30 @@ def test_invalid_yaml(tmp_path: Path) -> None:
         load_cases_from_path(path)
 
 
+def test_load_yaml_rejects_invalid_utf8(tmp_path: Path) -> None:
+    path = tmp_path / "bad.battest.yaml"
+    path.write_bytes(b"\xff\xfe not utf-8")
+    with pytest.raises(SchemaError, match="cannot read fixture"):
+        load_cases_from_path(path)
+
+
+def test_load_yaml_rejects_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "locked.battest.yaml"
+    path.write_text("description: x\nexpect:\n  exit_code: 0\n", encoding="utf-8")
+    original = Path.read_text
+
+    def boom(self: Path, *args: object, **kwargs: object) -> str:
+        if self.resolve() == path.resolve():
+            raise OSError("locked-yaml")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", boom)
+    with pytest.raises(SchemaError, match="cannot read fixture"):
+        load_cases_from_path(path)
+
+
 def test_env_expect_plain_mapping() -> None:
     document = parse_document(
         {
@@ -396,6 +420,60 @@ def test_env_expect_rejects_non_mapping() -> None:
             {"description": "env", "expect": {"env": ["FOO"]}},
             Path("doc.yaml"),
         )
+
+
+def test_env_expect_rejects_non_string_values() -> None:
+    with pytest.raises(SchemaError, match="must be a string"):
+        parse_document(
+            {"description": "env", "expect": {"env": {"FOO": 1}}},
+            Path("doc.yaml"),
+        )
+    with pytest.raises(SchemaError, match="must be a string"):
+        parse_document(
+            {
+                "description": "env",
+                "expect": {"env": {"values": {"FOO": 1}}},
+            },
+            Path("doc.yaml"),
+        )
+    with pytest.raises(SchemaError, match="must be a string"):
+        parse_document(
+            {
+                "description": "t",
+                "env": {"FOO": 1},
+                "expect": {"exit_code": 0},
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_empty_contains_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        OutputMatcher(contains="")
+    with pytest.raises(ValidationError):
+        FileMatcher(path="out.txt", contains="")
+    with pytest.raises(ValidationError):
+        CallExpectation(args_contains="")
+    with pytest.raises(SchemaError):
+        parse_document(
+            {
+                "description": "t",
+                "expect": {"stdout": {"contains": ""}},
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_call_expectation_rejects_both_constraints() -> None:
+    with pytest.raises(ValidationError, match="both args_contains and not_called"):
+        CallExpectation(args_contains="/all", not_called=True)
+
+
+def test_file_matcher_rejects_absence_with_content() -> None:
+    with pytest.raises(ValidationError, match="absence"):
+        FileMatcher(path="out.txt", exists=False, contains="x")
+    with pytest.raises(ValidationError, match="absence"):
+        FileMatcher(path="out.txt", not_exists=True, equals="x")
 
 
 def test_merge_expect_and_mocks_none_overlay() -> None:

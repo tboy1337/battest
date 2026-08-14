@@ -37,7 +37,7 @@
       "properties": {
         "equals": { "type": "string" },
         "equals_file": { "type": "string", "minLength": 1 },
-        "contains": { "type": "string" },
+        "contains": { "type": "string", "minLength": 1 },
         "regex": { "type": "string" },
         "empty": { "type": "boolean" },
         "newline": { "$ref": "#/$defs/newlineMode" }
@@ -51,7 +51,7 @@
         "path": { "type": "string", "minLength": 1 },
         "exists": { "type": "boolean" },
         "not_exists": { "type": "boolean" },
-        "contains": { "type": "string" },
+        "contains": { "type": "string", "minLength": 1 },
         "equals": { "type": "string" },
         "equals_file": { "type": "string", "minLength": 1 }
       },
@@ -76,6 +76,29 @@
             "properties": {
               "not_exists": { "const": false }
             }
+          },
+          {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "required": ["exists"],
+                    "properties": { "exists": { "const": false } }
+                  },
+                  {
+                    "required": ["not_exists"],
+                    "properties": { "not_exists": { "const": true } }
+                  }
+                ]
+              },
+              {
+                "anyOf": [
+                  { "required": ["contains"] },
+                  { "required": ["equals"] },
+                  { "required": ["equals_file"] }
+                ]
+              }
+            ]
           }
         ]
       }
@@ -109,13 +132,16 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "args_contains": { "type": "string" },
+        "args_contains": { "type": "string", "minLength": 1 },
         "not_called": { "const": true }
       },
       "anyOf": [
         { "required": ["args_contains"] },
         { "required": ["not_called"] }
-      ]
+      ],
+      "not": {
+        "required": ["args_contains", "not_called"]
+      }
     },
     "mockSpec": {
       "type": "object",

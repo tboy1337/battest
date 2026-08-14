@@ -330,7 +330,16 @@ def match_files(
                 )
                 continue
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                LOGGER.error("file is not utf-8 %s: %s", path, exc)
+                failures.append(
+                    _fail(
+                        "files",
+                        f"file {matcher.path} is not valid utf-8: {exc}",
+                    )
+                )
+                continue
             except OSError as exc:
                 LOGGER.error("failed to read %s: %s", path, exc)
                 failures.append(

@@ -51,47 +51,5 @@ runs:
         BATTEST_EXTRA_ARGS: ${{ inputs.extra-args }}
         BATTEST_SAFE_DEFAULTS: ${{ inputs.safe-defaults }}
       run: |
-        $disabled = @("false", "0", "no", "off")
-        $safeValue = ""
-        if ($null -ne $env:BATTEST_SAFE_DEFAULTS) {
-          $safeValue = $env:BATTEST_SAFE_DEFAULTS.Trim().ToLowerInvariant()
-        }
-        $safe = if ($disabled -contains $safeValue) { "--no-safe-defaults" } else { "--safe-defaults" }
-        $target = ""
-        if ($null -ne $env:BATTEST_PATH) { $target = $env:BATTEST_PATH.Trim() }
-        $extra = ""
-        if ($null -ne $env:BATTEST_EXTRA_ARGS) { $extra = $env:BATTEST_EXTRA_ARGS.Trim() }
-        $junit = Join-Path $env:RUNNER_TEMP "battest-junit.xml"
-        $cmdArgs = @("-m", "battest", "run", $safe, "--junit-xml", $junit)
-        if ($target) { $cmdArgs += $target }
-        if ($extra) {
-          if ($extra.StartsWith("[")) {
-            try {
-              $parsed = ConvertFrom-Json -InputObject $extra
-            } catch {
-              throw "battest extra-args is not valid JSON: $_"
-            }
-            if ($null -eq $parsed) {
-              throw "battest extra-args JSON must be an array of strings"
-            }
-            if ($parsed -is [System.Management.Automation.PSCustomObject]) {
-              throw "battest extra-args JSON must be an array of strings"
-            }
-            foreach ($item in @($parsed)) {
-              if ($item -is [System.Management.Automation.PSCustomObject]) {
-                throw "battest extra-args JSON must be an array of strings"
-              }
-              if ($item -isnot [string]) {
-                throw "battest extra-args JSON must be an array of strings"
-              }
-              $cmdArgs += $item
-            }
-          } else {
-            $cmdArgs += $extra.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
-          }
-        }
-        Write-Host ("Running: python " + ($cmdArgs -join " "))
-        python @cmdArgs
-        $code = $LASTEXITCODE
-        "junit-xml=$junit" >> $env:GITHUB_OUTPUT
-        if ($code -ne 0) { exit $code }
+        & "$env:GITHUB_ACTION_PATH/scripts/run-battest-action.ps1"
+        exit $LASTEXITCODE

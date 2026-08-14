@@ -9,7 +9,7 @@ analysis) and [batch-spec](https://github.com/tboy1337/batch-spec) (language
 spec). It does not depend on Blinter.
 
 **Requirements:** Python 3.11+ and Windows (for `battest run`). License:
-AGPL-3.0-or-later.
+AGPL-3.0-or-later ([COPYING](COPYING)).
 
 ## Five-minute start
 
@@ -65,6 +65,7 @@ Then `battest run tests`.
 - [GitHub Action](docs/github-action.md)
 - [Encoding](docs/encoding.md)
 - [Safety](docs/safety.md)
+- [Security](docs/SECURITY.md)
 
 ## Development
 

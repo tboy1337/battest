@@ -37,10 +37,10 @@ See [PATH mock stub crate](stub.md) for rustfmt, cargo check, clippy, tests,
 and coverage.
 
 `expect_calls` with `not_called: true` asserts the stub was never invoked.
-Each `expect_calls` entry must set `args_contains` or `not_called: true`.
-`not_called: false` is rejected. `expect_calls` requires `record_calls: true`
-(the default); a fixture that sets `record_calls: false` together with
-`expect_calls` is a schema error.
+Each `expect_calls` entry must set `args_contains` or `not_called: true`, not
+both. `args_contains` must be a non-empty string. `not_called: false` is
+rejected. `expect_calls` requires `record_calls: true` (the default); a fixture
+that sets `record_calls: false` together with `expect_calls` is a schema error.
 
 Set `record_calls: false` to skip creating `_calls/<command>.log`. The stub
 appends argv only when that log file already exists, so call recording stays

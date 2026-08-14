@@ -91,11 +91,14 @@ requires the captured text to contain no CR bytes. `crlf` requires CRLF line
 endings in the captured text (lone LF fails) and canonicalizes expected YAML
 LF to CRLF so authors can write logical lines. Invalid `regex` patterns are a
 schema error. `regex` is matched against newline-normalized captured text; the
-pattern itself is not rewritten. A non-UTF-8 `equals_file` is a case failure,
-not a runner crash. Each `files` entry must set at least one of `exists`,
-`not_exists`, `contains`, `equals`, or `equals_file`. `exists: false` asserts
-absence. A matcher with only `newline: lf` or `newline: crlf` still enforces
-those line endings.
+pattern itself is not rewritten. `contains` and mock `args_contains` must be
+non-empty; `""` is a schema error. A non-UTF-8 `equals_file` or workdir file
+read for `contains`/`equals` is a case failure, not a runner crash. Each
+`files` entry must set at least one of `exists`, `not_exists`, `contains`,
+`equals`, or `equals_file`. `exists: false` / `not_exists: true` asserts
+absence and cannot be combined with content matchers. `not_called: true`
+cannot be combined with `args_contains`. A matcher with only `newline: lf` or
+`newline: crlf` still enforces those line endings.
 
 ## Environment matchers
 

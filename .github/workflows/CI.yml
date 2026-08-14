@@ -31,6 +31,7 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -44,10 +45,10 @@ jobs:
           python -m isort --check-only src tests scripts
           python -m autopep8 -r --diff --exit-code --select=W291,W293 src tests scripts
           python -m mypy src/battest tests scripts
-          python -m pylint src/battest
+          python -m pylint src/battest scripts
           python -m pyproject_fmt --check pyproject.toml
           python -m bandit -r src/battest -c pyproject.toml -ll -q
-          python -m pip_audit -r requirements.txt -r requirements-dev.txt
+          python -m pip_audit
 
   test-unit:
     name: pytest unit (${{ matrix.os }}, Python ${{ matrix.python-version }})
@@ -68,6 +69,7 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -101,6 +103,7 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -139,18 +142,49 @@ jobs:
         uses: ./
         with:
           path: examples
+          extra-args: '["--jobs","1"]'
           safe-defaults: "true"
 
       - name: Assert JUnit report exists
         shell: pwsh
+        env:
+          BATTEST_JUNIT: ${{ steps.battest.outputs.junit-xml }}
         run: |
-          $path = "${{ steps.battest.outputs.junit-xml }}"
-          if (-not (Test-Path -LiteralPath $path)) {
-            throw "junit-xml output is missing: $path"
+          if (-not (Test-Path -LiteralPath $env:BATTEST_JUNIT)) {
+            throw "junit-xml output is missing: $env:BATTEST_JUNIT"
           }
-          if ((Get-Item -LiteralPath $path).Length -lt 1) {
-            throw "junit-xml is empty: $path"
+          if ((Get-Item -LiteralPath $env:BATTEST_JUNIT).Length -lt 1) {
+            throw "junit-xml is empty: $env:BATTEST_JUNIT"
           }
+
+      - id: battest-fail
+        continue-on-error: true
+        uses: ./
+        with:
+          path: missing-battest-fixtures
+          extra-args: '["--jobs","1"]'
+          safe-defaults: "true"
+
+      - name: Assert JUnit written on discovery failure
+        shell: pwsh
+        env:
+          BATTEST_JUNIT: ${{ steps.battest-fail.outputs.junit-xml }}
+          BATTEST_OUTCOME: ${{ steps.battest-fail.outcome }}
+        run: |
+          if ($env:BATTEST_OUTCOME -eq "success") {
+            throw "expected battest to fail when the discovery path is missing"
+          }
+          if (-not (Test-Path -LiteralPath $env:BATTEST_JUNIT)) {
+            throw "junit-xml output is missing: $env:BATTEST_JUNIT"
+          }
+          if ((Get-Item -LiteralPath $env:BATTEST_JUNIT).Length -lt 1) {
+            throw "junit-xml is empty: $env:BATTEST_JUNIT"
+          }
+
+      - name: Analyze PowerShell action script
+        shell: pwsh
+        run: |
+          & ./scripts/check_action_ps1.ps1
 
   codeql:
     name: CodeQL (${{ matrix.language }})
@@ -176,13 +210,14 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+          fetch-depth: 2
 
       - name: Set up Rust
         if: matrix.language == 'rust'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
@@ -192,7 +227,7 @@ jobs:
         run: cargo build --manifest-path stub/Cargo.toml --locked
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
 

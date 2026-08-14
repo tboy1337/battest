@@ -9,7 +9,13 @@ from typing import cast
 import pytest
 
 from battest.models import AssertionFailure, Outcome, RunResult
-from battest.report import exit_status, outcome_handled, render_console, write_junit_xml
+from battest.report import (
+    exit_status,
+    outcome_handled,
+    render_console,
+    write_junit_xml,
+    write_usage_junit,
+)
 
 
 def _result(outcome: Outcome, case_id: str = "c") -> RunResult:
@@ -186,3 +192,12 @@ def test_write_junit_xml_empty_failure_and_missing_messages(tmp_path: Path) -> N
     assert 'message="failed"' in text
     assert 'message="error"' in text
     assert 'message="timeout"' in text
+
+
+def test_write_usage_junit(tmp_path: Path) -> None:
+    path = tmp_path / "nested" / "junit.xml"
+    write_usage_junit(path, "no battest fixtures found")
+    text = path.read_text(encoding="utf-8")
+    assert 'tests="1"' in text
+    assert 'errors="1"' in text
+    assert "no battest fixtures found" in text

@@ -13,10 +13,29 @@ from battest.discover import default_root, discover_cases
 from battest.engine import EngineError, execute_cases, require_windows
 from battest.logging_config import configure_logging, get_logger
 from battest.models import EngineConfig
-from battest.report import exit_status, render_console, write_junit_xml
+from battest.report import (
+    exit_status,
+    render_console,
+    write_junit_xml,
+    write_usage_junit,
+)
 from battest.schema import SchemaError
 
 LOGGER = get_logger("cli")
+
+
+def _usage_failure(args: argparse.Namespace, message: str) -> int:
+    """Print a usage/schema error, optionally write JUnit, and return exit 2."""
+    LOGGER.error("%s", message)
+    print(message, file=sys.stderr)
+    if not args.junit_xml:
+        return 2
+    try:
+        write_usage_junit(Path(args.junit_xml), message)
+    except OSError as exc:
+        LOGGER.error("failed to write junit xml: %s", exc)
+        print(f"failed to write junit xml: {exc}", file=sys.stderr)
+    return 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,9 +99,7 @@ def _run_command(args: argparse.Namespace) -> int:
     try:
         require_windows()
     except EngineError as exc:
-        LOGGER.error("%s", exc)
-        print(str(exc), file=sys.stderr)
-        return 2
+        return _usage_failure(args, str(exc))
     root = Path(args.path).resolve() if args.path else default_root()
     LOGGER.info(
         "battest run path=%s jobs=%s timeout=%s safe_defaults=%s",
@@ -92,31 +109,17 @@ def _run_command(args: argparse.Namespace) -> int:
         args.safe_defaults,
     )
     if args.timeout <= 0:
-        message = "--timeout must be positive"
-        LOGGER.error("%s", message)
-        print(message, file=sys.stderr)
-        return 2
+        return _usage_failure(args, "--timeout must be positive")
     if args.jobs < 1:
-        message = "--jobs must be at least 1"
-        LOGGER.error("%s", message)
-        print(message, file=sys.stderr)
-        return 2
+        return _usage_failure(args, "--jobs must be at least 1")
     if args.max_diff < 1:
-        message = "--max-diff must be at least 1"
-        LOGGER.error("%s", message)
-        print(message, file=sys.stderr)
-        return 2
+        return _usage_failure(args, "--max-diff must be at least 1")
     try:
         cases = discover_cases(root, include_spec_exec=args.include_spec_exec)
     except SchemaError as exc:
-        LOGGER.error("schema error: %s", exc)
-        print(str(exc), file=sys.stderr)
-        return 2
+        return _usage_failure(args, str(exc))
     if not cases:
-        message = f"no battest fixtures found under {root}"
-        LOGGER.error("%s", message)
-        print(message, file=sys.stderr)
-        return 2
+        return _usage_failure(args, f"no battest fixtures found under {root}")
     config = EngineConfig(
         safe_defaults=args.safe_defaults,
         max_diff=args.max_diff,
@@ -126,9 +129,7 @@ def _run_command(args: argparse.Namespace) -> int:
     try:
         results = execute_cases(cases, config)
     except EngineError as exc:
-        LOGGER.error("%s", exc)
-        print(str(exc), file=sys.stderr)
-        return 2
+        return _usage_failure(args, str(exc))
     render_console(results, sys.stdout)
     if args.junit_xml:
         try:

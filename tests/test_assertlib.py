@@ -466,6 +466,19 @@ def test_match_files_read_oserror(
     assert "denied" in failures[0].message
 
 
+def test_match_files_invalid_utf8_is_failure(tmp_path: Path) -> None:
+    target = tmp_path / "out.bin"
+    target.write_bytes(b"\xff\xfe binary")
+    failures = match_files(
+        [FileMatcher(path="out.bin", contains="hello")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "not valid utf-8" in failures[0].message
+
+
 def test_match_mock_calls() -> None:
     mocks = {
         "ipconfig": MockSpec(expect_calls=[CallExpectation(args_contains="/flushdns")])

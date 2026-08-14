@@ -22,6 +22,11 @@ def test_version_is_pep440_like() -> None:
     assert pyproject.is_file()
 
 
+def test_package_ships_py_typed_marker() -> None:
+    marker = Path(battest.__file__).resolve().parent / "py.typed"
+    assert marker.is_file(), "PEP 561 requires src/battest/py.typed"
+
+
 def test_fallback_version_missing_and_without_version_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

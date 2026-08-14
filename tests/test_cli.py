@@ -43,6 +43,41 @@ def test_main_schema_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert main(["run", str(bad)]) == 2
 
 
+def test_main_writes_junit_on_schema_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+    bad = tmp_path / "bad.battest.yaml"
+    bad.write_text("description: x\n", encoding="utf-8")
+    junit = tmp_path / "junit.xml"
+    assert main(["run", str(bad), "--junit-xml", str(junit)]) == 2
+    assert junit.is_file()
+    text = junit.read_text(encoding="utf-8")
+    assert "<error" in text
+    assert "invalid fixture" in text
+
+
+def test_main_writes_junit_when_no_fixtures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+    junit = tmp_path / "out" / "junit.xml"
+    assert main(["run", str(tmp_path), "--junit-xml", str(junit)]) == 2
+    assert junit.is_file()
+    assert "no battest fixtures" in junit.read_text(encoding="utf-8")
+
+
+def test_main_writes_junit_when_path_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+    junit = tmp_path / "junit.xml"
+    missing = tmp_path / "missing-battest-fixtures"
+    assert main(["run", str(missing), "--junit-xml", str(junit)]) == 2
+    assert junit.is_file()
+    assert "does not exist" in junit.read_text(encoding="utf-8")
+
+
 def test_main_engine_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def raise_engine() -> None:
         raise EngineError("nope")
@@ -300,24 +335,35 @@ def test_run_case_success_on_windows(tmp_path: Path) -> None:
 
 
 def test_root_action_yml_is_composite() -> None:
-    action_path = Path(__file__).resolve().parent.parent / "action.yml"
+    root = Path(__file__).resolve().parent.parent
+    action_path = root / "action.yml"
+    script_path = root / "scripts" / "run-battest-action.ps1"
     assert action_path.is_file(), "action.yml must live at the repository root"
+    assert (
+        script_path.is_file()
+    ), "composite action must invoke scripts/run-battest-action.ps1"
     loaded = yaml.safe_load(action_path.read_text(encoding="utf-8"))
     assert loaded["runs"]["using"] == "composite"
     assert "junit-xml" in loaded["outputs"]
     run_source = "\n".join(str(step.get("run", "")) for step in loaded["runs"]["steps"])
+    env_blob = "\n".join(str(step.get("env", "")) for step in loaded["runs"]["steps"])
     assert "${{ inputs.path }}" not in run_source
     assert "${{ inputs.extra-args }}" not in run_source
     assert "${{ inputs.safe-defaults }}" not in run_source
-    assert "BATTEST_PATH" in run_source
-    assert "python @cmdArgs" in run_source
-    assert "ConvertFrom-Json" in run_source
-    python_at = run_source.index("python @cmdArgs")
-    output_at = run_source.index('"junit-xml=$junit" >> $env:GITHUB_OUTPUT')
-    exit_at = run_source.index("if ($code -ne 0) { exit $code }")
-    assert python_at < output_at < exit_at
-    assert "$code = $LASTEXITCODE" in run_source
-    assert "extra-args is not valid JSON" in run_source
-    assert "JSON must be an array of strings" in run_source
-    assert '$disabled = @("false", "0", "no", "off")' in run_source
-    assert '$env:BATTEST_SAFE_DEFAULTS -eq "true"' not in run_source
+    assert "BATTEST_PATH" in env_blob
+    assert "BATTEST_EXTRA_ARGS" in env_blob
+    assert "BATTEST_SAFE_DEFAULTS" in env_blob
+    assert "run-battest-action.ps1" in run_source
+    assert "ConvertFrom-Json" not in run_source
+    script = script_path.read_text(encoding="utf-8")
+    create_at = script.index("New-Item -ItemType File -Path $junit")
+    python_at = script.index("Invoke-BattestPython -Arguments")
+    assert create_at < python_at
+    assert "junit-xml=$junit" in script
+    assert "& python @Arguments" in script
+    assert "ConvertFrom-Json" in script
+    assert "extra-args is not valid JSON" in script
+    assert "JSON must be an array of strings" in script
+    assert "Starting battest" in script
+    assert "Write-Host" not in script
+    assert "cmdArgs -join" not in script

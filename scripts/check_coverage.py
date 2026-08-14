@@ -19,10 +19,14 @@ DEFAULT_JSON = REPO_ROOT / "coverage.json"
 
 
 class _IgnoreExtra(BaseModel):
+    """Pydantic base that ignores unknown coverage.json fields."""
+
     model_config = ConfigDict(extra="ignore")
 
 
 class RegionSummary(_IgnoreExtra):
+    """Covered and total statement/branch counts for one coverage region."""
+
     covered_lines: int
     num_statements: int
     covered_branches: int = 0
@@ -30,22 +34,30 @@ class RegionSummary(_IgnoreExtra):
 
 
 class RegionReport(_IgnoreExtra):
+    """Named function or class coverage payload wrapping a region summary."""
+
     summary: RegionSummary
 
 
 class FileCoverage(_IgnoreExtra):
+    """Per-file coverage.json entry including function and class maps."""
+
     summary: RegionSummary
     functions: dict[str, RegionReport] = Field(default_factory=dict)
     classes: dict[str, RegionReport] = Field(default_factory=dict)
 
 
 class CoverageReport(_IgnoreExtra):
+    """Top-level coverage.json document with per-file and totals summaries."""
+
     files: dict[str, FileCoverage]
     totals: RegionSummary
 
 
 @dataclass(frozen=True)
 class MetricPercents:
+    """Line, branch, function, and class coverage percentages."""
+
     line: float
     branch: float
     function: float

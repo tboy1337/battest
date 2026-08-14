@@ -86,6 +86,21 @@ def render_console(results: list[RunResult], stream: TextIO) -> None:
     )
 
 
+def write_usage_junit(path: Path, message: str) -> None:
+    """Write a one-testcase error suite for CLI usage or schema failures."""
+    write_junit_xml(
+        [
+            RunResult(
+                case_id="battest",
+                description="battest run",
+                outcome=Outcome.ERROR,
+                error_message=message,
+            )
+        ],
+        path,
+    )
+
+
 def write_junit_xml(results: list[RunResult], path: Path) -> None:
     """Write an xunit2-style JUnit XML report."""
     failures = sum(1 for item in results if item.outcome == Outcome.FAIL)

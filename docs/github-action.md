@@ -40,3 +40,8 @@ Outputs:
 
 The action fails if `RUNNER_OS` is not Windows. Inputs are passed through
 environment variables so they are not interpolated into the PowerShell script.
+The run step invokes [`scripts/run-battest-action.ps1`](../scripts/run-battest-action.ps1).
+That script creates the JUnit path under `$RUNNER_TEMP` before calling battest
+and does not echo `extra-args` tokens (they can be sensitive). battest itself
+still overwrites the file after a completed run, and writes a one-testcase
+error suite when discovery or usage fails with `--junit-xml`.

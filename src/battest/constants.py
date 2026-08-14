@@ -30,7 +30,6 @@ ENV_DUMP_NAME = "_battest_env.txt"
 WRAPPER_NAME = "_battest_wrapper.cmd"
 MOCK_DIR_NAME = "_battest_mocks"
 CALL_LOG_DIR = "_calls"
-HELPER_NAMES: frozenset[str] = frozenset({ENV_DUMP_NAME, WRAPPER_NAME, MOCK_DIR_NAME})
 
 DISCOVERY_SKIP_DIR_NAMES: frozenset[str] = frozenset(
     {

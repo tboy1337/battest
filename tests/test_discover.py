@@ -200,7 +200,7 @@ def test_iter_fixture_files_logs_walk_errors(
     assert "locked-dir" in caplog.text
 
 
-def test_iter_fixture_files_walk_oserror_returns_empty(
+def test_iter_fixture_files_walk_oserror_is_schema_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     def boom_walk(_top: object, **_kwargs: object) -> object:
@@ -208,7 +208,8 @@ def test_iter_fixture_files_walk_oserror_returns_empty(
 
     monkeypatch.setattr(os, "walk", boom_walk)
     with caplog.at_level("ERROR", logger="battest.discover"):
-        assert iter_fixture_files(tmp_path) == []
+        with pytest.raises(SchemaError, match="cannot walk discovery path"):
+            iter_fixture_files(tmp_path)
     assert "cannot walk" in caplog.text
 
 
@@ -221,6 +222,6 @@ def test_iter_fixture_files_walk_iteration_oserror(
 
     monkeypatch.setattr(os, "walk", flaky_walk)
     with caplog.at_level("ERROR", logger="battest.discover"):
-        found = iter_fixture_files(tmp_path)
-    assert any(path.name == "keep.battest.yaml" for path in found)
+        with pytest.raises(SchemaError, match="cannot walk discovery path"):
+            iter_fixture_files(tmp_path)
     assert "mid-walk" in caplog.text

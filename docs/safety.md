@@ -1,7 +1,7 @@
 # Safety
 
 battest is not a sandbox. It runs real `cmd.exe`. Destructive scripts can still
-harm the machine.
+harm the machine. Report security issues as described in [SECURITY.md](SECURITY.md).
 
 Mitigations that **are** included:
 

@@ -34,7 +34,7 @@ class OutputMatcher(BaseModel):
 
     equals: str | None = None
     equals_file: str | None = Field(default=None, min_length=1)
-    contains: str | None = None
+    contains: str | None = Field(default=None, min_length=1)
     regex: str | None = None
     empty: bool | None = None
     newline: NewlineMode = NewlineMode.AUTO
@@ -75,7 +75,7 @@ class FileMatcher(BaseModel):
     path: str = Field(min_length=1)
     exists: bool | None = None
     not_exists: bool | None = None
-    contains: str | None = None
+    contains: str | None = Field(default=None, min_length=1)
     equals: str | None = None
     equals_file: str | None = Field(default=None, min_length=1)
 
@@ -86,6 +86,16 @@ class FileMatcher(BaseModel):
             raise ValueError("not_exists must be true when set")
         if self.exists is True and self.not_exists is True:
             raise ValueError("file matcher cannot set both exists and not_exists")
+        missing = self.exists is False or self.not_exists is True
+        has_content = any(
+            value is not None
+            for value in (self.contains, self.equals, self.equals_file)
+        )
+        if missing and has_content:
+            raise ValueError(
+                "file matcher cannot combine absence with contains, equals, "
+                "or equals_file"
+            )
         if (
             self.exists is None
             and self.not_exists is None
@@ -105,7 +115,7 @@ class CallExpectation(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    args_contains: str | None = None
+    args_contains: str | None = Field(default=None, min_length=1)
     not_called: bool | None = None
 
     @model_validator(mode="after")
@@ -113,6 +123,10 @@ class CallExpectation(BaseModel):
         """Require args_contains or not_called so empty expectations cannot pass."""
         if self.not_called is False:
             raise ValueError("not_called must be true when set")
+        if self.not_called is True and self.args_contains is not None:
+            raise ValueError(
+                "call expectation cannot set both args_contains and not_called"
+            )
         if self.args_contains is None and self.not_called is not True:
             raise ValueError("call expectation must set args_contains or not_called")
         return self
@@ -135,6 +149,25 @@ class MockSpec(BaseModel):
         if self.expect_calls and not self.record_calls:
             raise ValueError("expect_calls requires record_calls to be true")
         return self
+
+
+def _require_string_mapping(raw: object, label: str) -> dict[str, str]:
+    """Reject non-string environment values so YAML numbers cannot silently pass."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"{label} must be a mapping of strings")
+    mapped: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise ValueError(f"{label} {key!r} must be a string")
+        mapped[str(key)] = value
+    return mapped
+
+
+def _env_mapping_must_be_strings(value: object) -> object:
+    """Reject non-string values in a fixture env mapping."""
+    if value is None or not isinstance(value, dict):
+        return value
+    return _require_string_mapping(value, "environment value")
 
 
 class EnvExpect(BaseModel):
@@ -160,10 +193,18 @@ class EnvExpect(BaseModel):
             key: value for key, value in data.items() if key not in {"values", "unset"}
         }
         merged: dict[str, str] = {}
-        if isinstance(values_raw, dict):
-            merged.update({str(key): str(value) for key, value in values_raw.items()})
-        merged.update({str(key): str(value) for key, value in extras.items()})
+        if values_raw is not None:
+            merged.update(_require_string_mapping(values_raw, "environment value"))
+        merged.update(_require_string_mapping(extras, "environment value"))
         return {"values": merged, "unset": unset_raw}
+
+    @field_validator("values", mode="before")
+    @classmethod
+    def values_must_be_strings(cls, value: object) -> object:
+        """Reject non-string entries in an explicit values mapping."""
+        if value is None or not isinstance(value, dict):
+            return value
+        return _require_string_mapping(value, "environment value")
 
 
 class Expect(BaseModel):
@@ -200,6 +241,12 @@ class ParamOverlay(BaseModel):
         if not stripped:
             raise ValueError("param id must not be empty")
         return stripped
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def overlay_env_values_must_be_strings(cls, value: object) -> object:
+        """Reject non-string overlay environment values."""
+        return _env_mapping_must_be_strings(value)
 
     @field_validator("mocks")
     @classmethod
@@ -239,6 +286,12 @@ class CaseDocument(BaseModel):
         if not stripped:
             raise ValueError("description must not be empty")
         return stripped
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def document_env_values_must_be_strings(cls, value: object) -> object:
+        """Reject non-string case environment values."""
+        return _env_mapping_must_be_strings(value)
 
     @field_validator("mocks")
     @classmethod

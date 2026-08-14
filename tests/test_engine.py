@@ -945,6 +945,31 @@ def test_mock_error_becomes_error_result(
     assert "battest_stub.exe is missing" in result.error_message
 
 
+def test_prepare_valueerror_is_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="v",
+        description="v",
+        source_path=tmp_path / "v.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+
+    def boom(_work_dir: Path, _copy_paths: list[Path], _base_dir: Path) -> None:
+        raise ValueError("path escapes fixture directory")
+
+    monkeypatch.setattr("battest.engine._seed_work_dir", boom)
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "path escapes fixture directory" in result.error_message
+
+
 def test_teardown_failure_keeps_fail_outcome(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

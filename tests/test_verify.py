@@ -39,9 +39,12 @@ def test_build_steps_include_rust_typecheck_lint_and_coverage() -> None:
     assert any("check_rust_coverage.py" in item for item in joined)
     assert any("cargo test " in item and "stub/Cargo.toml" in item for item in joined)
     assert any("check_coverage.py" in item for item in joined)
+    assert any("pylint" in item and "scripts" in item for item in joined)
+    assert any("pip_audit" in item and "-r" not in item.split() for item in joined)
     if sys.platform == "win32":
         assert any("build_stub.py" in item for item in joined)
         assert any("battest_stub.exe" in item for item in joined)
+        assert any("check_action_ps1.ps1" in item for item in joined)
 
 
 def test_build_steps_honor_skip_flags() -> None:

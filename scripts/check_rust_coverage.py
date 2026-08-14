@@ -22,10 +22,14 @@ DEFAULT_JSON = REPO_ROOT / "stub" / "target" / "llvm-cov.json"
 
 
 class _IgnoreExtra(BaseModel):
+    """Pydantic base that ignores unknown llvm-cov JSON fields."""
+
     model_config = ConfigDict(extra="ignore")
 
 
 class CountPercent(_IgnoreExtra):
+    """A single llvm-cov counter with covered, total, and percent fields."""
+
     count: int
     covered: int
     percent: float = 0.0
@@ -33,10 +37,13 @@ class CountPercent(_IgnoreExtra):
 
 
 def _empty_counts() -> CountPercent:
+    """Return a zeroed counter used when llvm-cov omits a metric."""
     return CountPercent(count=0, covered=0)
 
 
 class CoverageSummary(_IgnoreExtra):
+    """Aggregated llvm-cov counters for lines, functions, regions, and branches."""
+
     lines: CountPercent
     functions: CountPercent
     regions: CountPercent
@@ -46,21 +53,29 @@ class CoverageSummary(_IgnoreExtra):
 
 
 class FileEntry(_IgnoreExtra):
+    """One file record from an llvm-cov export."""
+
     filename: str
     summary: CoverageSummary
 
 
 class ExportData(_IgnoreExtra):
+    """llvm-cov export payload listing files and totals."""
+
     files: list[FileEntry]
     totals: CoverageSummary
 
 
 class LlvmExport(_IgnoreExtra):
+    """Root llvm-cov JSON document wrapping one or more export payloads."""
+
     data: list[ExportData]
 
 
 @dataclass(frozen=True)
 class MetricPercents:
+    """Line, branch, function, and region coverage percentages."""
+
     line: float
     branch: float
     function: float

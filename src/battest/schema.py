@@ -46,6 +46,9 @@ def load_yaml_mapping(path: Path) -> dict[str, Any]:
         raise SchemaError(f"fixture file not found: {path}")
     try:
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        LOGGER.error("cannot read fixture %s: %s", path, exc)
+        raise SchemaError(f"cannot read fixture {path}: {exc}") from exc
     except yaml.YAMLError as exc:
         raise SchemaError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(loaded, dict):

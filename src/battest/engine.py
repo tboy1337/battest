@@ -585,7 +585,7 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
         work_dir = Path(raw_temp)
         try:
             prepared = _prepare_work_dir(case, config, work_dir)
-        except (OSError, MockError) as exc:
+        except (OSError, ValueError, MockError) as exc:
             LOGGER.error("case %s failed before execution: %s", case.case_id, exc)
             return _error_result(case, started, warnings, str(exc))
         deadline = time.perf_counter() + timeout

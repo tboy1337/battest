@@ -74,7 +74,7 @@ def build_steps(
             skip_format,
         ),
         ([python, "-m", "mypy", "src/battest", "tests", "scripts"], skip_lint),
-        ([python, "-m", "pylint", "src/battest"], skip_lint),
+        ([python, "-m", "pylint", "src/battest", "scripts"], skip_lint),
         (
             [python, "-m", "pyproject_fmt", "--check", "pyproject.toml"],
             skip_format,
@@ -123,10 +123,6 @@ def build_steps(
                 python,
                 "-m",
                 "pip_audit",
-                "-r",
-                "requirements.txt",
-                "-r",
-                "requirements-dev.txt",
             ],
             skip_audit,
         ),
@@ -136,6 +132,15 @@ def build_steps(
         ),
         ([python, "-m", "pytest"], skip_tests),
         ([python, "scripts/check_coverage.py"], skip_tests),
+        (
+            [
+                "powershell",
+                "-NoProfile",
+                "-File",
+                "scripts/check_action_ps1.ps1",
+            ],
+            skip_tests or sys.platform != "win32",
+        ),
         (
             [python, "scripts/build_stub.py"],
             skip_tests or sys.platform != "win32",
