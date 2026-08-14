@@ -1,0 +1,95 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging and distribution
+build/
+dist/
+sdist/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.eggs/
+develop-eggs/
+eggs/
+downloads/
+parts/
+var/
+lib/
+lib64/
+
+# Test and quality tooling
+testResults.xml
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+coverage.json
+coverage.lcov
+*.cover
+*.py,cover
+.tox/
+.nox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+tests/pytest.log
+*.log
+logs/
+pylint-report.txt
+pylint-output.txt
+
+# Virtual environments
+.env
+.venv
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Secrets
+.secrets
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+*.pdb
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.temp
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+
+# Backup and swap files
+*.bak
+*.swp
+*.swo
+
+# Temporary directories
+tmp/
+temp/

@@ -1,0 +1,137 @@
+[MAIN]
+init-hook='import sys; sys.path.extend([".", "src"])'
+ignore=CVS,.git,__pycache__,.pytest_cache,.mypy_cache,.coverage,htmlcov,dist,build,*.egg-info,vendor
+ignore-patterns=^\.#
+jobs=0
+limit-inference-results=100
+load-plugins=
+persistent=yes
+fail-under=8
+fail-on=
+output-format=text
+reports=yes
+
+[MESSAGES CONTROL]
+disable=raw-checker-failed,
+        bad-inline-option,
+        locally-disabled,
+        file-ignored,
+        suppressed-message,
+        useless-suppression,
+        deprecated-pragma,
+        use-symbolic-message-instead,
+        too-many-public-methods,
+        too-few-public-methods,
+        too-many-instance-attributes,
+        too-many-arguments,
+        too-many-locals,
+        too-many-statements,
+        too-many-branches,
+        too-many-return-statements,
+        too-many-positional-arguments,
+        broad-exception-caught,
+        duplicate-code,
+        line-too-long
+enable=c-extension-no-member
+
+[REPORTS]
+evaluation=10.0 - ((float(5 * error + warning + refactor + convention) / statement) * 10)
+msg-template={path}:{line}:{column}: {msg_id}: {msg} ({symbol})
+output-format=text
+reports=yes
+score=yes
+
+[REFACTORING]
+max-nested-blocks=5
+never-returning-functions=sys.exit,argparse.parse_error
+
+[LOGGING]
+logging-format-style=old
+logging-modules=logging
+
+[MISCELLANEOUS]
+notes=FIXME,XXX,TODO,BUG,HACK
+notes-rgx=
+
+[SIMILARITIES]
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+ignore-signatures=yes
+min-similarity-lines=4
+
+[FORMAT]
+expected-line-ending-format=
+ignore-long-lines=^\s*(# )?<?https?://\S+>?$
+indent-after-paren=4
+indent-string='    '
+max-line-length=88
+max-module-lines=1000
+single-line-class-stmt=no
+single-line-if-stmt=no
+
+[BASIC]
+argument-naming-style=snake_case
+argument-rgx=[a-z_][a-z0-9_]{1,50}$
+attr-naming-style=snake_case
+attr-rgx=[a-z_][a-z0-9_]{1,50}$
+bad-names=foo,bar,baz,toto,tutu,tata
+class-attribute-naming-style=any
+class-const-naming-style=UPPER_CASE
+class-naming-style=PascalCase
+class-rgx=[A-Z_][a-zA-Z0-9]+$
+const-naming-style=UPPER_CASE
+const-rgx=(([A-Z_][A-Z0-9_]*)|(__.*__))$
+docstring-min-length=-1
+function-naming-style=snake_case
+function-rgx=[a-z_][a-z0-9_]{2,50}$
+good-names=i,j,k,ex,Run,_
+include-naming-hint=no
+inlinevar-naming-style=any
+method-naming-style=snake_case
+method-rgx=[a-z_][a-z0-9_]{2,50}$
+module-naming-style=snake_case
+module-rgx=(([a-z_][a-z0-9_]*)|([A-Z][a-zA-Z0-9]+))$
+no-docstring-rgx=^_
+property-classes=abc.abstractproperty
+variable-naming-style=snake_case
+variable-rgx=[a-z_][a-z0-9_]{1,50}$
+
+[DESIGN]
+max-args=8
+max-attributes=12
+max-bool-expr=5
+max-branches=16
+max-locals=20
+max-parents=7
+max-public-methods=20
+max-returns=8
+max-statements=60
+min-public-methods=1
+
+[EXCEPTIONS]
+overgeneral-exceptions=builtins.BaseException,
+                       builtins.Exception
+
+[TYPECHECK]
+contextmanager-decorators=contextlib.contextmanager
+ignore-mixin-members=yes
+ignore-none=yes
+ignore-on-opaque-inference=yes
+ignored-classes=optparse.Values,thread._local,_thread._local
+include-naming-hint=no
+property-classes=abc.abstractproperty
+
+[IMPORTS]
+allow-wildcard-with-all=no
+analyse-fallback-blocks=no
+deprecated-modules=optparse,tkinter.tix
+known-third-party=enchant
+
+[VARIABLES]
+allow-global-unused-variables=yes
+callbacks=cb_,_cb
+dummy-variables-rgx=_+$|(_[a-zA-Z0-9_]*[a-zA-Z0-9]+?$)|dummy|^ignored_|^unused_
+ignored-argument-names=_.*|^ignored_|^unused_
+init-import=no
+redefining-builtins-modules=six.moves,past.builtins,future.builtins,builtins,io

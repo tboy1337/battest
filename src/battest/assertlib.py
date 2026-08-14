@@ -1,0 +1,339 @@
+"""Assertions and readable failure diffs."""
+
+from __future__ import annotations
+
+import difflib
+from pathlib import Path
+import re
+from typing import Never
+
+from battest.filesnap import file_text
+from battest.logging_config import get_logger
+from battest.models import (
+    AssertionFailure,
+    CallExpectation,
+    Case,
+    EnvExpect,
+    FileMatcher,
+    MockSpec,
+    NewlineMode,
+    OutputMatcher,
+)
+
+LOGGER = get_logger("assertlib")
+
+
+def unified_diff_text(expected: str, actual: str, max_diff: int) -> str:
+    """Return a unified diff, truncated to max_diff characters."""
+    rendered = "".join(
+        difflib.unified_diff(
+            expected.splitlines(keepends=True),
+            actual.splitlines(keepends=True),
+            fromfile="expected",
+            tofile="actual",
+        )
+    )
+    if len(rendered) > max_diff:
+        return rendered[:max_diff] + "\n... (truncated)"
+    return rendered
+
+
+def apply_newline_mode(text: str, mode: NewlineMode) -> str:
+    """Normalize newlines according to matcher mode."""
+    match mode:
+        case NewlineMode.AUTO | NewlineMode.LF:
+            return text.replace("\r\n", "\n").replace("\r", "\n")
+        case NewlineMode.CRLF:
+            return text
+        case _:
+            unreachable: Never = mode
+            raise ValueError(f"unhandled newline mode: {unreachable}")
+
+
+def _read_equals_file(source_dir: Path, relative: str) -> str:
+    path = relative if Path(relative).is_absolute() else source_dir / relative
+    return Path(path).read_text(encoding="utf-8")
+
+
+def _fail(
+    kind: str,
+    message: str,
+    expected: str | None = None,
+    actual: str | None = None,
+    diff: str | None = None,
+) -> AssertionFailure:
+    LOGGER.info("assertion failure kind=%s message=%s", kind, message)
+    return AssertionFailure(
+        kind=kind,
+        message=message,
+        expected=expected,
+        actual=actual,
+        diff=diff,
+    )
+
+
+def match_output(
+    stream_name: str,
+    matcher: OutputMatcher | None,
+    actual: str,
+    source_dir: Path,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    """Evaluate stdout/stderr matchers."""
+    if matcher is None or not matcher.has_constraint():
+        return []
+    failures: list[AssertionFailure] = []
+    actual_cmp = apply_newline_mode(actual, matcher.newline)
+    if matcher.empty is True and actual_cmp.strip() != "":
+        failures.append(
+            _fail(
+                stream_name,
+                f"{stream_name} was not empty",
+                expected="",
+                actual=actual,
+                diff=unified_diff_text("", actual_cmp, max_diff),
+            )
+        )
+    if matcher.empty is False and actual_cmp.strip() == "":
+        failures.append(_fail(stream_name, f"{stream_name} was empty"))
+    if matcher.equals is not None:
+        expected_cmp = apply_newline_mode(matcher.equals, matcher.newline)
+        if actual_cmp != expected_cmp:
+            failures.append(
+                _fail(
+                    stream_name,
+                    f"{stream_name} did not equal expected text",
+                    expected=matcher.equals,
+                    actual=actual,
+                    diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+                )
+            )
+    if matcher.equals_file is not None:
+        expected_text = _read_equals_file(source_dir, matcher.equals_file)
+        expected_cmp = apply_newline_mode(expected_text, matcher.newline)
+        if actual_cmp != expected_cmp:
+            failures.append(
+                _fail(
+                    stream_name,
+                    f"{stream_name} did not equal file {matcher.equals_file}",
+                    expected=expected_text,
+                    actual=actual,
+                    diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+                )
+            )
+    if matcher.contains is not None:
+        needle = apply_newline_mode(matcher.contains, matcher.newline)
+        if needle not in actual_cmp:
+            failures.append(
+                _fail(
+                    stream_name,
+                    f"{stream_name} did not contain expected text",
+                    expected=matcher.contains,
+                    actual=actual,
+                )
+            )
+    if matcher.regex is not None:
+        pattern = apply_newline_mode(matcher.regex, matcher.newline)
+        if re.search(pattern, actual_cmp, re.MULTILINE) is None:
+            failures.append(
+                _fail(
+                    stream_name,
+                    f"{stream_name} did not match regex",
+                    expected=matcher.regex,
+                    actual=actual,
+                )
+            )
+    return failures
+
+
+def match_exit_code(expected: int | None, actual: int | None) -> list[AssertionFailure]:
+    """Compare exit codes when an expectation is set."""
+    if expected is None:
+        return []
+    if actual != expected:
+        return [
+            _fail(
+                "exit_code",
+                f"exit code {actual} != {expected}",
+                expected=str(expected),
+                actual=str(actual),
+            )
+        ]
+    return []
+
+
+def match_env(
+    expect: EnvExpect | None, actual: dict[str, str]
+) -> list[AssertionFailure]:
+    """Compare selected environment variables."""
+    if expect is None:
+        return []
+    failures: list[AssertionFailure] = []
+    lookup = {name.upper(): (name, value) for name, value in actual.items()}
+    for name, expected_value in expect.values.items():
+        found = lookup.get(name.upper())
+        if found is None:
+            failures.append(
+                _fail(
+                    "env",
+                    f"environment variable {name} was not set",
+                    expected=expected_value,
+                )
+            )
+            continue
+        _, actual_value = found
+        if actual_value != expected_value:
+            failures.append(
+                _fail(
+                    "env",
+                    f"environment variable {name} mismatch",
+                    expected=expected_value,
+                    actual=actual_value,
+                )
+            )
+    for name in expect.unset:
+        if name.upper() in lookup:
+            _, actual_value = lookup[name.upper()]
+            failures.append(
+                _fail(
+                    "env",
+                    f"environment variable {name} should be unset",
+                    expected="",
+                    actual=actual_value,
+                )
+            )
+    return failures
+
+
+def match_files(
+    matchers: list[FileMatcher],
+    work_dir: Path,
+    source_dir: Path,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    """Compare filesystem expectations against the isolated working directory."""
+    failures: list[AssertionFailure] = []
+    for matcher in matchers:
+        path = work_dir / matcher.path
+        exists = path.is_file() or path.is_dir()
+        if matcher.exists is True and not exists:
+            failures.append(_fail("files", f"expected path to exist: {matcher.path}"))
+        if matcher.not_exists is True and exists:
+            failures.append(
+                _fail("files", f"expected path to be absent: {matcher.path}")
+            )
+        if (
+            matcher.contains is not None
+            or matcher.equals is not None
+            or matcher.equals_file is not None
+        ):
+            text = file_text(work_dir, matcher.path)
+            if text is None:
+                failures.append(
+                    _fail("files", f"file not found for content check: {matcher.path}")
+                )
+                continue
+            if matcher.contains is not None and matcher.contains not in text:
+                failures.append(
+                    _fail(
+                        "files",
+                        f"file {matcher.path} did not contain expected text",
+                        expected=matcher.contains,
+                        actual=text,
+                    )
+                )
+            if matcher.equals is not None and text != matcher.equals:
+                failures.append(
+                    _fail(
+                        "files",
+                        f"file {matcher.path} content mismatch",
+                        expected=matcher.equals,
+                        actual=text,
+                        diff=unified_diff_text(matcher.equals, text, max_diff),
+                    )
+                )
+            if matcher.equals_file is not None:
+                expected_text = _read_equals_file(source_dir, matcher.equals_file)
+                if text != expected_text:
+                    failures.append(
+                        _fail(
+                            "files",
+                            f"file {matcher.path} did not equal {matcher.equals_file}",
+                            expected=expected_text,
+                            actual=text,
+                            diff=unified_diff_text(expected_text, text, max_diff),
+                        )
+                    )
+    return failures
+
+
+def match_mock_calls(
+    mocks: dict[str, MockSpec],
+    recorded: dict[str, list[str]],
+) -> list[AssertionFailure]:
+    """Evaluate expect_calls against recorded PATH-stub argv lines."""
+    failures: list[AssertionFailure] = []
+    for name, spec in mocks.items():
+        lines = recorded.get(name.lower(), [])
+        nonempty = [line for line in lines if line.strip() != "" or line == ""]
+        for expectation in spec.expect_calls:
+            failures.extend(_match_one_call(name, expectation, nonempty))
+    return failures
+
+
+def _match_one_call(
+    name: str,
+    expectation: CallExpectation,
+    lines: list[str],
+) -> list[AssertionFailure]:
+    if expectation.not_called is True:
+        if lines:
+            return [
+                _fail(
+                    "mocks",
+                    f"expected {name} not to be called",
+                    expected="",
+                    actual="\n".join(lines),
+                )
+            ]
+        return []
+    if expectation.args_contains is not None:
+        needle = expectation.args_contains
+        if not any(needle in line for line in lines):
+            return [
+                _fail(
+                    "mocks",
+                    f"{name} was not called with arguments containing {needle!r}",
+                    expected=needle,
+                    actual="\n".join(lines),
+                )
+            ]
+    return []
+
+
+def evaluate_case(
+    case: Case,
+    exit_code: int | None,
+    stdout: str,
+    stderr: str,
+    env: dict[str, str],
+    work_dir: Path,
+    mock_calls: dict[str, list[str]],
+    max_diff: int,
+) -> list[AssertionFailure]:
+    """Run every configured assertion for a case."""
+    LOGGER.info("evaluating assertions case_id=%s exit=%s", case.case_id, exit_code)
+    source_dir = case.source_path.parent
+    failures: list[AssertionFailure] = []
+    failures.extend(match_exit_code(case.expect.exit_code, exit_code))
+    failures.extend(
+        match_output("stdout", case.expect.stdout, stdout, source_dir, max_diff)
+    )
+    failures.extend(
+        match_output("stderr", case.expect.stderr, stderr, source_dir, max_diff)
+    )
+    failures.extend(match_env(case.expect.env, env))
+    failures.extend(match_files(case.expect.files, work_dir, source_dir, max_diff))
+    failures.extend(match_mock_calls(case.mocks, mock_calls))
+    LOGGER.info("assertion failures case_id=%s count=%s", case.case_id, len(failures))
+    return failures

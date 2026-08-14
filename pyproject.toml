@@ -1,0 +1,131 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [ "setuptools>=77" ]
+
+[project]
+name = "battest"
+version = "0.1.0"
+description = """\
+  battest is a runtime test runner for Windows batch files. It executes real cmd.exe scripts and asserts on exit \
+  codes, output, environment, and filesystem side effects.\
+  """
+readme = "README.md"
+keywords = [
+  "assertions",
+  "bat",
+  "batch",
+  "batch-file",
+  "batch-script",
+  "batchfile",
+  "ci",
+  "cmd",
+  "cmd.exe",
+  "pytest",
+  "testing",
+  "windows",
+]
+license = "AGPL-3.0-or-later"
+license-files = [ "COPYING" ]
+maintainers = [ { name = "tboy1337", email = "tboy1337@proton.me" } ]
+authors = [ { name = "tboy1337", email = "tboy1337@proton.me" } ]
+requires-python = ">=3.12"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Testing",
+  "Topic :: System :: Systems Administration",
+]
+dependencies = [
+  "charset-normalizer",
+  "pydantic",
+  "pyyaml",
+]
+optional-dependencies.dev = [
+  "autopep8",
+  "bandit",
+  "black",
+  "isort",
+  "mypy",
+  "pip-audit",
+  "pylint",
+  "pyproject-fmt",
+  "pytest",
+  "pytest-cov",
+  "pytest-mock",
+  "pytest-timeout",
+  "pytest-xdist",
+  "types-pyyaml",
+]
+urls.Documentation = "https://github.com/tboy1337/battest"
+urls.Homepage = "https://github.com/tboy1337/battest"
+urls.Issues = "https://github.com/tboy1337/battest/issues"
+urls.Repository = "https://github.com/tboy1337/battest.git"
+scripts.battest = "battest.cli:main"
+
+[tool.setuptools]
+packages.find.where = [ "src" ]
+include-package-data = true
+package-data.battest = [ "data/*", "py.typed" ]
+
+[tool.black]
+target-version = [ "py312", "py313", "py314" ]
+line-length = 88
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | vendor
+)/
+'''
+skip-string-normalization = false
+skip-magic-trailing-comma = false
+
+[tool.isort]
+profile = "black"
+atomic = true
+color_output = false
+quiet = false
+verbose = false
+line_length = 88
+multi_line_output = 3
+balanced_wrapping = true
+use_parentheses = true
+include_trailing_comma = true
+force_single_line = false
+force_grid_wrap = 0
+single_line_exclusions = [ "typing" ]
+force_sort_within_sections = true
+lexicographical = true
+order_by_type = true
+ensure_newline_before_comments = true
+lines_between_types = 1
+combine_as_imports = true
+combine_star = false
+from_first = false
+sections = [ "FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER" ]
+default_section = "THIRDPARTY"
+known_first_party = [ "battest" ]
+src_paths = [ "scripts", "src", "tests" ]
+skip_glob = [ "vendor/*" ]
+
+[tool.bandit]
+exclude_dirs = [ ".venv", "build", "dist", "tests", "vendor", "venv" ]
+# B101: assert used in tests only (tests excluded above)
+# B404/B603: subprocess is required to invoke cmd.exe; arguments are lists
+skips = [ "B101", "B404", "B603" ]

@@ -1,0 +1,54 @@
+name: battest
+description: Run battest Windows batch runtime tests. The job must use windows-latest.
+author: tboy1337
+inputs:
+  path:
+    description: Path to discover tests from (file or directory)
+    required: false
+    default: ""
+  extra-args:
+    description: Extra arguments forwarded to battest run
+    required: false
+    default: ""
+  safe-defaults:
+    description: Stub destructive external commands unless a case mocks or allows them
+    required: false
+    default: "true"
+  python-version:
+    description: Python version used to install and run battest
+    required: false
+    default: "3.14"
+runs:
+  using: composite
+  steps:
+    - name: Require Windows runner
+      shell: pwsh
+      run: |
+        if ($env:RUNNER_OS -ne "Windows") {
+          throw "battest requires a Windows runner (runs-on: windows-latest). Current RUNNER_OS=$env:RUNNER_OS"
+        }
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install battest
+      shell: pwsh
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install "${{ github.action_path }}"
+
+    - name: Run battest
+      shell: pwsh
+      run: |
+        $safe = if ("${{ inputs.safe-defaults }}" -eq "true") { "--safe-defaults" } else { "--no-safe-defaults" }
+        $target = "${{ inputs.path }}".Trim()
+        $extra = "${{ inputs.extra-args }}".Trim()
+        $junit = Join-Path $env:RUNNER_TEMP "battest-junit.xml"
+        $command = @("python", "-m", "battest", "run", $safe, "--junit-xml", $junit)
+        if ($target) { $command += $target }
+        if ($extra) { $command += $extra.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries) }
+        Write-Host ("Running: " + ($command -join " "))
+        & $command[0] $command[1..($command.Length - 1)]
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

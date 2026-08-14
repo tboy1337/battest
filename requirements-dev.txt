@@ -1,0 +1,15 @@
+-r requirements.txt
+autopep8
+bandit
+black
+isort
+mypy
+pip-audit
+pylint
+pyproject-fmt
+pytest
+pytest-cov
+pytest-mock
+pytest-timeout
+pytest-xdist
+types-pyyaml

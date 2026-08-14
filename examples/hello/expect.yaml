@@ -1,0 +1,7 @@
+description: echo hello
+expect:
+  exit_code: 0
+  stdout:
+    contains: hello
+  stderr:
+    empty: true

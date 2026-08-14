@@ -1,0 +1,85 @@
+[run]
+source = src/battest
+omit =
+    */tests/*
+    */test_*
+    */__pycache__/*
+    */.*
+    */venv/*
+    */env/*
+    */build/*
+    */dist/*
+    */htmlcov/*
+    */coverage/*
+    */.tox/*
+    */.pytest_cache/*
+    */.mypy_cache/*
+    */site-packages/*
+    */vendor/*
+branch = True
+concurrency = thread,multiprocessing
+data_file = .coverage
+parallel = False
+relative_files = True
+
+[report]
+fail_under = 90.0
+show_missing = True
+skip_covered = False
+skip_empty = False
+precision = 2
+sort = Cover
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self\.debug
+    raise AssertionError
+    raise NotImplementedError
+    if 0:
+    if False:
+    if __name__ .__eq__ .__main__.:
+    @(abc\.)?abstractmethod
+    if TYPE_CHECKING:
+    if DEBUG:
+    if sys.version_info
+    if os.name
+    if platform.system
+    except ImportError:
+    except ModuleNotFoundError:
+    \.\.\.
+partial_branches =
+    pragma: no branch
+    if 0:
+    if False:
+    if __name__ .__eq__ .__main__.:
+exclude_also =
+    if TYPE_CHECKING:
+    if sys\.platform
+    if os\.name
+    if sys\.version_info
+    @abc\.abstractmethod
+    if DEBUG:
+    if __debug__:
+ignore_errors = False
+
+[html]
+directory = htmlcov
+title = Coverage Report for battest
+skip_covered = False
+skip_empty = False
+
+[xml]
+output = coverage.xml
+package_depth = 99
+
+[json]
+output = coverage.json
+pretty_print = True
+
+[lcov]
+output = coverage.lcov
+
+[paths]
+source =
+    src/battest
+    */site-packages/battest

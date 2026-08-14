@@ -1,0 +1,43 @@
+description: WindowsRescue flush_dns.cmd with PATH stubs
+script: flush_dns.cmd
+timeout_seconds: 15
+mocks:
+  net:
+    exit_code: 0
+  ipconfig:
+    exit_code: 0
+    expect_calls:
+      - args_contains: "/flushdns"
+  timeout:
+    exit_code: 0
+expect:
+  exit_code: 0
+  stdout:
+    contains: Flushing DNS cache
+params:
+  - id: not-admin
+    mocks:
+      net:
+        exit_code: 2
+      ipconfig:
+        exit_code: 0
+        expect_calls:
+          - not_called: true
+      timeout:
+        exit_code: 0
+    expect:
+      exit_code: 1
+      stdout:
+        contains: administrator
+  - id: ipconfig-fail
+    mocks:
+      net:
+        exit_code: 0
+      ipconfig:
+        exit_code: 1
+      timeout:
+        exit_code: 0
+    expect:
+      exit_code: 1
+      stdout:
+        contains: Failed to flush DNS

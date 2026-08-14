@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tboy1337/battest/schema/battest-expect.schema.json",
+  "title": "battest fixture document",
+  "type": "object",
+  "required": ["description", "expect"],
+  "additionalProperties": false,
+  "properties": {
+    "description": { "type": "string", "minLength": 1 },
+    "script": { "type": "string", "minLength": 1 },
+    "args": { "type": "array", "items": { "type": "string" } },
+    "stdin": { "type": "string" },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "timeout_seconds": { "type": "number", "exclusiveMinimum": 0 },
+    "setup": { "type": "string" },
+    "teardown": { "type": "string" },
+    "copy": { "type": "array", "items": { "type": "string" } },
+    "allow": { "type": "array", "items": { "type": "string" } },
+    "mocks": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/mockSpec" }
+    },
+    "expect": { "$ref": "#/$defs/expect" },
+    "params": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/paramOverlay" }
+    }
+  },
+  "$defs": {
+    "newlineMode": { "type": "string", "enum": ["auto", "crlf", "lf"] },
+    "outputMatcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "equals": { "type": "string" },
+        "equals_file": { "type": "string" },
+        "contains": { "type": "string" },
+        "regex": { "type": "string" },
+        "empty": { "type": "boolean" },
+        "newline": { "$ref": "#/$defs/newlineMode" }
+      }
+    },
+    "fileMatcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "exists": { "type": "boolean" },
+        "not_exists": { "type": "boolean" },
+        "contains": { "type": "string" },
+        "equals": { "type": "string" },
+        "equals_file": { "type": "string" }
+      }
+    },
+    "envExpect": {
+      "type": "object",
+      "properties": {
+        "values": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "unset": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exit_code": { "type": "integer" },
+        "stdout": { "$ref": "#/$defs/outputMatcher" },
+        "stderr": { "$ref": "#/$defs/outputMatcher" },
+        "env": { "$ref": "#/$defs/envExpect" },
+        "files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fileMatcher" }
+        }
+      }
+    },
+    "callExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "args_contains": { "type": "string" },
+        "not_called": { "type": "boolean" }
+      }
+    },
+    "mockSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "exit_code": { "type": "integer" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "record_calls": { "type": "boolean" },
+        "expect_calls": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/callExpectation" }
+        }
+      }
+    },
+    "paramOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "stdin": { "type": "string" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "mocks": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/mockSpec" }
+        },
+        "expect": { "$ref": "#/$defs/expect" },
+        "timeout_seconds": { "type": "number", "exclusiveMinimum": 0 },
+        "allow": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

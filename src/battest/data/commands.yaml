@@ -1,0 +1,420 @@
+version: 5
+
+# True cmd.exe internals (no separate where.exe hit for the verb as an external).
+# Detection consumers that only need "Windows/cmd command?" should prefer
+# builtin_commands (union of internals + stock utilities) below.
+cmd_internal_commands:
+  - assoc
+  - break
+  - call
+  - cd
+  - chdir
+  - cls
+  - color
+  - copy
+  - date
+  - del
+  - dir
+  - dpath
+  - echo
+  - endlocal
+  - erase
+  - exit
+  - for
+  - ftype
+  - goto
+  - if
+  - keys
+  - md
+  - mkdir
+  - mklink
+  - move
+  - path
+  - pause
+  - popd
+  - prompt
+  - pushd
+  - rd
+  - rem
+  - ren
+  - rename
+  - rmdir
+  - set
+  - setlocal
+  - shift
+  - start
+  - time
+  - title
+  - type
+  - ver
+  - verify
+  - vol
+
+# Stock Windows PATH/System32 utilities commonly used from batch (not cmd
+# internals). These can be shadowed by a same-named file in the CWD per PATHEXT.
+stock_windows_utilities:
+  - arp
+  - attrib
+  - bcdedit
+  - certutil
+  - chcp
+  - chkdsk
+  - chkntfs
+  - choice
+  - cipher
+  - clip
+  - cmd
+  - cmdkey
+  - compact
+  - comp
+  - convert
+  - cscript
+  - curl
+  - diskpart
+  - doskey
+  - driverquery
+  - expand
+  - explorer
+  - fc
+  - find
+  - findstr
+  - forfiles
+  - format
+  - fsutil
+  - ftp
+  - getmac
+  - gpresult
+  - help
+  - hostname
+  - icacls
+  - ipconfig
+  - label
+  - logoff
+  - mode
+  - more
+  - mountvol
+  - msiexec
+  - msg
+  - nbtstat
+  - net
+  - netsh
+  - netstat
+  - notepad
+  - nslookup
+  - openfiles
+  - ping
+  - powercfg
+  - powershell
+  - print
+  - quser
+  - qwinsta
+  - recover
+  - reg
+  - replace
+  - robocopy
+  - route
+  - runas
+  - sc
+  - schtasks
+  - setx
+  - shutdown
+  - sort
+  - subst
+  - systeminfo
+  - takeown
+  - tar
+  - taskkill
+  - tasklist
+  - telnet
+  - timeout
+  - tracert
+  - tree
+  - waitfor
+  - where
+  - whoami
+  - wmic
+  - wscript
+  - xcopy
+
+# Union of cmd_internal_commands + stock_windows_utilities for "is this a
+# Windows/cmd command?" detection. Prefer the split lists when distinguishing
+# internals (never CWD-shadowed) from stock externals (shadowable).
+builtin_commands:
+  - arp
+  - assoc
+  - attrib
+  - bcdedit
+  - break
+  - call
+  - cd
+  - certutil
+  - chcp
+  - chdir
+  - chkdsk
+  - chkntfs
+  - choice
+  - cipher
+  - clip
+  - cls
+  - cmd
+  - cmdkey
+  - color
+  - compact
+  - comp
+  - convert
+  - copy
+  - cscript
+  - curl
+  - date
+  - del
+  - dir
+  - diskpart
+  - doskey
+  - dpath
+  - driverquery
+  - echo
+  - endlocal
+  - erase
+  - exit
+  - expand
+  - explorer
+  - fc
+  - find
+  - findstr
+  - for
+  - forfiles
+  - format
+  - fsutil
+  - ftp
+  - ftype
+  - getmac
+  - goto
+  - gpresult
+  - help
+  - hostname
+  - icacls
+  - if
+  - ipconfig
+  - keys
+  - label
+  - logoff
+  - md
+  - mkdir
+  - mklink
+  - mode
+  - more
+  - mountvol
+  - move
+  - msiexec
+  - msg
+  - nbtstat
+  - net
+  - netsh
+  - netstat
+  - notepad
+  - nslookup
+  - openfiles
+  - path
+  - pause
+  - ping
+  - popd
+  - powercfg
+  - powershell
+  - print
+  - prompt
+  - pushd
+  - quser
+  - qwinsta
+  - rd
+  - recover
+  - reg
+  - rem
+  - ren
+  - rename
+  - replace
+  - rmdir
+  - robocopy
+  - route
+  - runas
+  - sc
+  - schtasks
+  - set
+  - setlocal
+  - setx
+  - shift
+  - shutdown
+  - sort
+  - start
+  - subst
+  - systeminfo
+  - takeown
+  - tar
+  - taskkill
+  - tasklist
+  - telnet
+  - time
+  - timeout
+  - title
+  - tracert
+  - tree
+  - type
+  - ver
+  - verify
+  - vol
+  - waitfor
+  - where
+  - whoami
+  - wmic
+  - wscript
+  - xcopy
+
+# Alias verb -> canonical catalog name (same implementation / shared /? text).
+command_aliases:
+  chdir: cd
+  erase: del
+  mkdir: md
+  rename: ren
+  rmdir: rd
+
+common_external_tools:
+  - 7z
+  - aria2c
+  - aws
+  - az
+  - bundle
+  - cargo
+  - choco
+  - cmake
+  - code
+  - composer
+  - docker
+  - docker-compose
+  - dotnet
+  - gcloud
+  - gem
+  - gh
+  - git
+  - go
+  - gofmt
+  - gradle
+  - gzip
+  - helm
+  - hg
+  - java
+  - javac
+  - kubectl
+  - make
+  - maven
+  - msbuild
+  - mvn
+  - nano
+  - ninja
+  - node
+  - npm
+  - npx
+  - nuget
+  - php
+  - pip
+  - pip3
+  - pipenv
+  - pnpm
+  - poetry
+  - py
+  - python
+  - python3
+  - ruby
+  - rustc
+  - rustup
+  - scoop
+  - scp
+  - ssh
+  - svn
+  - terraform
+  - unzip
+  - vim
+  - wget
+  - winget
+  - wsl
+  - yarn
+  - zip
+
+deprecated_commands:
+  at: Deprecated Windows command (use schtasks)
+  bitsadmin: Deprecated Windows command (use BITS PowerShell cmdlets)
+  cacls: Deprecated Windows command (use icacls)
+  caspol: Deprecated .NET Framework CAS policy tool (still ships with Framework)
+  dpath: Deprecated undocumented CMD internal (legacy APPEND equivalent; still responds to /?)
+  keys: Deprecated DOS-compatibility CMD internal (still recognized; prints status / accepts ON|OFF but has no effect under Windows because command-line editing is always enabled)
+  winrm: Deprecated Windows command (use PowerShell WinRM cmdlets)
+  wmic: Deprecated Windows command (not installed by default on Windows 11 24H2+; optional FoD)
+
+removed_commands:
+  append: Absent on modern Windows hosts (not a supported cmd.exe internal; historical DOS APPEND)
+  assign: Removed since Windows NT (not supported in cmd.exe)
+  backup: Removed since Windows NT (replaced by ntbackup then wbadmin)
+  browstat: Windows Resource Kit add-on tool (browser status); not a stock cmd.exe command
+  diskcomp: Removed Windows command
+  diskcopy: Removed Windows command
+  edlin: Historical DOS line editor; not present on 64-bit Windows (was a 16-bit NTVDM tool on 32-bit editions only)
+  graftabl: Removed / unavailable on modern Windows (still listed by HELP; binary not present)
+  inuse: Windows Resource Kit add-on tool; not a stock cmd.exe command
+  join: Removed since Windows NT (not supported in cmd.exe)
+  streams: Sysinternals Streams tool; not a stock cmd.exe command
+
+older_windows_commands:
+  - command
+  - debug
+  - edit
+  - fastopen
+  - graphics
+  - keyb
+  - loadfix
+  - mem
+  - mirror
+  - nlsfunc
+  - qbasic
+  - share
+  - undelete
+  - unformat
+
+common_command_typos:
+  caal: call
+  ecko: echo
+  ecoh: echo
+  exitt: exit
+  forx: for
+  fro: for
+  goot: goto
+  iff: if
+  sett: set
+
+builtin_overlap_deprecated_notes:
+  wmic: >-
+    Listed in stock_windows_utilities / builtin_commands and
+    deprecated_commands: still present for detection on modern Windows, but
+    deprecated in favor of CIM/PowerShell.
+  dpath: >-
+    Listed in cmd_internal_commands / builtin_commands and deprecated_commands:
+    still a recognized cmd internal (legacy APPEND equivalent) but
+    deprecated/undocumented for new scripts. The HELP utility does not list it
+    ("This command is not supported by the help utility. Try \"dpath /?\".");
+    use dpath /? (see audit/cmd-help/dpath-help.txt).
+  keys: >-
+    Listed in cmd_internal_commands / builtin_commands and deprecated_commands:
+    still recognized as a DOS-compatibility internal but has no effect under
+    modern Windows command-line editing. The HELP utility does not list it
+    ("Try \"keys /?\"."); use keys /? (see audit/cmd-help/keys-help.txt).
+  telnet: >-
+    Listed in stock_windows_utilities / builtin_commands for detection, but the
+    Telnet client is an optional Windows Feature / FoD component and is often
+    absent (where telnet fails). Treat like other optional stock tools; do not
+    assume it is installed.
+  curl: >-
+    Listed in stock_windows_utilities / builtin_commands for detection as a
+    stock Windows utility since Windows 10 1803+, but availability can still
+    vary on older or stripped images. Treat as optional when targeting
+    down-level hosts.
+  tar: >-
+    Listed in stock_windows_utilities / builtin_commands for detection as a
+    stock Windows utility on modern Windows 10/11, but availability can vary on
+    older hosts. Treat as optional when targeting down-level images.

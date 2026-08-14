@@ -1,0 +1,3 @@
+# Top-level JSON Schema is not package data; setuptools has no pyproject.toml
+# equivalent for extra sdist files outside the package directory.
+include schema/*.json

@@ -1,0 +1,58 @@
+# Set default behavior for all files
+* text=auto
+
+# Cross-platform source and config (LF)
+*.py text eol=lf
+*.pyi text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.rs text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+*.in text eol=lf
+*.txt text eol=lf
+.coveragerc text eol=lf
+pylintrc text eol=lf
+mypy.ini text eol=lf
+pytest.ini text eol=lf
+COPYING text eol=lf
+*.sh text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.gitmodules text eol=lf
+.github/** text eol=lf
+
+# Windows-native scripts (CRLF in the working tree for cmd.exe)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.reg text eol=crlf
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+
+# Binary files
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.pdb binary
+*.obj binary
+*.o binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.7z binary
+*.tar binary
+*.gz binary
+*.whl binary
+
+# Linguist overrides
+vendor/** linguist-vendored
