@@ -16,6 +16,7 @@ from battest.engine import (
     EngineError,
     _close_process_streams,
     _combined_env,
+    _evaluate_after_run,
     _prepare_work_dir,
     _run_process,
     _script_warnings,
@@ -32,6 +33,7 @@ from battest.engine import (
     remaining_timeout,
     require_windows,
     resolved_timeout,
+    system32_executable,
     teardown_timeout,
     wrapper_sut_relative,
 )
@@ -130,6 +132,19 @@ def test_cmd_executable_falls_back_when_missing(
 ) -> None:
     monkeypatch.setenv("SystemRoot", str(tmp_path))
     assert cmd_executable() == "cmd.exe"
+
+
+def test_system32_executable_prefers_file_then_falls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    system32 = tmp_path / "System32"
+    system32.mkdir()
+    taskkill = system32 / "taskkill.exe"
+    taskkill.write_bytes(b"MZ")
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    assert system32_executable("taskkill.exe") == str(taskkill)
+    monkeypatch.setenv("SystemRoot", str(tmp_path / "missing-root"))
+    assert system32_executable("taskkill.exe") == "taskkill.exe"
 
 
 def test_seed_work_dir_copies_directory(tmp_path: Path) -> None:
@@ -255,6 +270,100 @@ def test_combined_env_prefixes_mock_and_collapses_path(
     assert "BATTEST_ENVFILE" not in env
 
 
+def test_combined_env_case_path_wins_over_posix_path_and_PATH(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fixture PATH must replace inherited Path/PATH even when both exist."""
+    monkeypatch.setattr(
+        "battest.engine.os.environ",
+        {
+            "PATH": "C:\\from-process",
+            "Path": "C:\\Windows",
+            "OTHER": "keep",
+        },
+    )
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        env={"PATH": "C:\\custom"},
+        expect=Expect(),
+    )
+    mock_dir = tmp_path / "mocks"
+    mock_dir.mkdir()
+    env = _combined_env(case, tmp_path, mock_dir)
+    path_keys = [key for key in env if key.upper() == "PATH"]
+    assert len(path_keys) == 1
+    value = env[path_keys[0]]
+    assert value.startswith(str(mock_dir))
+    assert "C:\\custom" in value
+    assert "C:\\from-process" not in value
+    assert "C:\\Windows" not in value
+    assert env["OTHER"] == "keep"
+
+
+def test_combined_env_without_fixture_path_keeps_inherited(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "battest.engine.os.environ",
+        {"PATH": "C:\\Windows", "FOO": "1"},
+    )
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        env={"FOO": "bar"},
+        expect=Expect(),
+    )
+    env = _combined_env(case, tmp_path, None)
+    path_keys = [key for key in env if key.upper() == "PATH"]
+    assert len(path_keys) == 1
+    assert env[path_keys[0]] == "C:\\Windows"
+    assert env["FOO"] == "bar"
+
+
+def test_evaluate_after_run_errors_when_call_logs_unreadable(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        expect=Expect(),
+    )
+    mocker.patch(
+        "battest.engine.read_call_logs",
+        side_effect=MockError("cannot read call log ipconfig.log"),
+    )
+    result = _evaluate_after_run(
+        case,
+        EngineConfig(),
+        tmp_path,
+        tmp_path / "mocks",
+        "utf-8",
+        30.0,
+        [],
+        0.1,
+        0,
+        "",
+        "",
+        False,
+    )
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "cannot read call log" in result.error_message
+
+
 def test_kill_process_tree_invokes_taskkill(mocker: MockerFixture) -> None:
     seen: list[list[str]] = []
     timeouts: list[object] = []
@@ -268,7 +377,9 @@ def test_kill_process_tree_invokes_taskkill(mocker: MockerFixture) -> None:
 
     mocker.patch("battest.engine.subprocess.run", fake_run)
     kill_process_tree(1234)
-    assert seen[0][:3] == ["taskkill", "/F", "/T"]
+    assert Path(seen[0][0]).name.lower() in {"taskkill", "taskkill.exe"}
+    assert seen[0][1:4] == ["/F", "/T", "/PID"]
+    assert seen[0][4] == "1234"
     assert timeouts[0] is not None
 
 

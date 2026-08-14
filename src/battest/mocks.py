@@ -150,12 +150,16 @@ def read_call_logs(mock_dir: Path) -> dict[str, list[str]]:
     if not call_dir.is_dir():
         return recorded
     for log_path in sorted(call_dir.glob("*.log")):
-        lines = [
-            line.rstrip("\r")
-            for line in log_path.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
-        ]
+        try:
+            lines = [
+                line.rstrip("\r")
+                for line in log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+            ]
+        except OSError as exc:
+            LOGGER.error("cannot read call log %s: %s", log_path, exc)
+            raise MockError(f"cannot read call log {log_path}: {exc}") from exc
         recorded[log_path.stem] = lines
         LOGGER.debug("call log %s lines=%s", log_path.stem, len(lines))
     return recorded

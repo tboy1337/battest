@@ -2,16 +2,23 @@
 
 use std::env;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn make_temp_dir() -> PathBuf {
     let seq = TEST_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
-    let path =
-        env::temp_dir().join(format!("battest-stub-cli-{}-{seq}", std::process::id()));
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |value| value.as_nanos());
+    let path = env::temp_dir().join(format!(
+        "battest-stub-cli-{}-{seq}-{nanos}",
+        std::process::id()
+    ));
     fs::create_dir_all(&path).expect("create temp dir");
     path
 }
@@ -44,9 +51,48 @@ fn stub_binary() -> PathBuf {
     candidate
 }
 
+fn is_etxtbsy(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::ExecutableFileBusy || err.raw_os_error() == Some(26)
+}
+
+fn copy_stub_once(src: &Path, tmp: &Path, dest: &Path) -> io::Result<()> {
+    let _ = fs::remove_file(tmp);
+    fs::copy(src, tmp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(tmp)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(tmp, perms)?;
+    }
+    let _ = fs::remove_file(dest);
+    fs::rename(tmp, dest)?;
+    Ok(())
+}
+
+fn copy_stub_with_retry(src: &Path, dest: &Path) {
+    let tmp = dest.with_extension("exe.part");
+    let mut last_err: Option<io::Error> = None;
+    for attempt in 0..8 {
+        match copy_stub_once(src, &tmp, dest) {
+            Ok(()) => return,
+            Err(err) if is_etxtbsy(&err) => {
+                last_err = Some(err);
+                std::thread::sleep(Duration::from_millis(50 * (attempt + 1)));
+            }
+            Err(err) => panic!("copy stub to {}: {err}", dest.display()),
+        }
+    }
+    panic!(
+        "copy stub to {} still busy: {}",
+        dest.display(),
+        last_err.map(|err| err.to_string()).unwrap_or_default()
+    );
+}
+
 fn install_named_stub(dir: &Path, name: &str) -> PathBuf {
     let dest = dir.join(format!("{name}.exe"));
-    fs::copy(stub_binary(), &dest).expect("copy stub");
+    copy_stub_with_retry(&stub_binary(), &dest);
     dest
 }
 

@@ -18,17 +18,17 @@ from pydantic import (
 )
 
 from battest.constants import (
-    COMMAND_NAME_MAX_LENGTH,
+    COMMAND_NAME_PATTERN,
     MAX_JOBS,
+    MAX_REGEX_PATTERN_LENGTH,
     WINDOWS_RESERVED_DEVICE_NAMES,
 )
 from battest.logging_config import get_logger
 
 LOGGER = get_logger("models")
 _COMMAND_EXTENSIONS = (".exe", ".cmd", ".bat", ".com")
-_COMMAND_NAME_RE = re.compile(
-    rf"^[a-z0-9](?:[a-z0-9._-]{{0,{COMMAND_NAME_MAX_LENGTH - 2}}}[a-z0-9])?$"
-)
+_COMMAND_NAME_RE = re.compile(COMMAND_NAME_PATTERN)
+_NESTED_QUANTIFIER_RE = re.compile(r"\((?:\?[P:=!<][^)]*)?[^()]*[+*{][^()]*\)[+*?{]")
 
 
 def require_finite_positive(value: float) -> float:
@@ -73,9 +73,21 @@ class OutputMatcher(BaseModel):
     @field_validator("regex")
     @classmethod
     def regex_must_compile(cls, value: str | None) -> str | None:
-        """Reject patterns that cannot be compiled."""
+        """Reject patterns that cannot be compiled, are too long, or nested-quantify."""
         if value is None:
             return None
+        if len(value) > MAX_REGEX_PATTERN_LENGTH:
+            LOGGER.warning(
+                "rejecting regex longer than %s characters", MAX_REGEX_PATTERN_LENGTH
+            )
+            raise ValueError(
+                f"regex pattern exceeds {MAX_REGEX_PATTERN_LENGTH} characters"
+            )
+        if _NESTED_QUANTIFIER_RE.search(value):
+            LOGGER.warning("rejecting regex with nested quantifiers")
+            raise ValueError(
+                "regex pattern has nested quantifiers that can hang the runner"
+            )
         try:
             re.compile(value)
         except re.error as exc:

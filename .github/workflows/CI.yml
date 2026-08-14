@@ -98,6 +98,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -204,7 +206,7 @@ jobs:
           - language: actions
             build-mode: none
           - language: rust
-            build-mode: manual
+            build-mode: none
     steps:
       - uses: actions/checkout@v7
         with:
@@ -215,16 +217,14 @@ jobs:
       - name: Set up Rust
         if: matrix.language == 'rust'
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-
-      - name: Build Rust stub
-        if: matrix.language == 'rust'
-        run: cargo build --manifest-path stub/Cargo.toml --locked
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
@@ -243,6 +243,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.97.1"
           components: rustfmt, clippy, llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
@@ -293,6 +294,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.97.1"
 
       - uses: Swatinem/rust-cache@v2
         with:

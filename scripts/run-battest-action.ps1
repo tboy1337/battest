@@ -131,7 +131,8 @@ function Invoke-BattestAction {
     }
     $safe = Get-BattestSafeDefaultsFlag -Value $safeValue
     $extraArgs = Convert-BattestExtraArg -Extra $extra
-    $junit = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'battest-junit.xml'
+    $junitName = 'battest-junit-' + [guid]::NewGuid().ToString('N') + '.xml'
+    $junit = Join-Path -Path $env:RUNNER_TEMP -ChildPath $junitName
     New-Item -ItemType File -Path $junit -Force | Out-Null
     Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "junit-xml=$junit" -Encoding utf8
 

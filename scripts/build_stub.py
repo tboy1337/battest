@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -35,6 +36,19 @@ def cargo_executable() -> str:
     return cargo
 
 
+def windows_release_env() -> dict[str, str]:
+    """Return cargo env with MSVC reproducible-link flags on Windows."""
+    env = os.environ.copy()
+    if sys.platform != "win32":
+        LOGGER.debug("skipping MSVC RUSTFLAGS on %s", sys.platform)
+        return env
+    extra = "-C link-arg=/Brepro -C debuginfo=0"
+    existing = env.get("RUSTFLAGS", "").strip()
+    env["RUSTFLAGS"] = f"{existing} {extra}".strip() if existing else extra
+    LOGGER.info("Windows release RUSTFLAGS=%s", env["RUSTFLAGS"])
+    return env
+
+
 def release_artifact() -> Path:
     """Return the cargo --release output path for this platform."""
     target = STUB_DIR / "target" / "release"
@@ -61,7 +75,12 @@ def build_release() -> Path:
         "--locked",
     ]
     LOGGER.info("running %s", " ".join(command))
-    completed = subprocess.run(command, cwd=REPO_ROOT, check=False)
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        check=False,
+        env=windows_release_env(),
+    )
     if completed.returncode != 0:
         raise RuntimeError(f"cargo build failed with exit {completed.returncode}")
     artifact = release_artifact()

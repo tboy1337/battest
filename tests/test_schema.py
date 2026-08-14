@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 import pytest
 
-from battest.constants import MAX_JOBS
+from battest.constants import COMMAND_NAME_MAX_LENGTH, COMMAND_NAME_PATTERN, MAX_JOBS
 from battest.models import (
     CallExpectation,
     CaseDocument,
@@ -45,6 +45,8 @@ def test_schema_payload_is_object() -> None:
     assert payload["properties"]["mocks"]["propertyNames"]["$ref"].endswith(
         "commandName"
     )
+    assert payload["$defs"]["commandName"]["maxLength"] == COMMAND_NAME_MAX_LENGTH
+    assert payload["$defs"]["commandName"]["pattern"] == COMMAND_NAME_PATTERN
     exit_schema = payload["$defs"]["mockSpec"]["properties"]["exit_code"]
     assert exit_schema["minimum"] == 0
     assert exit_schema["maximum"] == 255

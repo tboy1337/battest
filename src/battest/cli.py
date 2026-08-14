@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         "path",
         nargs="?",
         default=None,
-        help="fixture file or directory (default: ./tests or cwd)",
+        help="fixture file or directory (default: ./tests with fixtures, else cwd)",
     )
     run_parser.add_argument("--junit-xml", dest="junit_xml", default=None)
     run_parser.add_argument("--jobs", type=int, default=1)

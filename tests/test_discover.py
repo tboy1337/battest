@@ -89,13 +89,28 @@ def test_discover_duplicate_case_ids_raise(tmp_path: Path) -> None:
         discover_cases(tmp_path)
 
 
-def test_default_root_prefers_tests(
+def test_default_root_prefers_tests_with_fixtures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
+    (tests_dir / "hello.cmd").write_text("@echo off\n", encoding="utf-8")
+    (tests_dir / "hello.battest.yaml").write_text(
+        "description: hello\nscript: hello.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
     assert default_root() == tests_dir
+
+
+def test_default_root_skips_tests_without_fixtures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_unit.py").write_text("def test_ok() -> None:\n    assert True\n")
+    monkeypatch.chdir(tmp_path)
+    assert default_root() == tmp_path
 
 
 def test_default_root_falls_back_to_cwd(
@@ -103,6 +118,20 @@ def test_default_root_falls_back_to_cwd(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    assert default_root() == tmp_path
+
+
+def test_default_root_falls_back_when_tests_scan_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    def boom(_root: Path) -> list[Path]:
+        raise SchemaError("cannot walk discovery path")
+
+    monkeypatch.setattr("battest.discover.iter_fixture_files", boom)
     assert default_root() == tmp_path
 
 

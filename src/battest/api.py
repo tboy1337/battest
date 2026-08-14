@@ -7,16 +7,24 @@ from pathlib import Path
 from battest.constants import DEFAULT_MAX_DIFF, DEFAULT_TIMEOUT_SECONDS
 from battest.discover import discover_cases
 from battest.engine import execute_case, execute_cases
+from battest.logging_config import get_logger
 from battest.models import Case, EngineConfig, RunResult
 from battest.schema import load_cases_from_path
+
+LOGGER = get_logger("api")
 
 
 def load_case(path: str | Path) -> list[Case]:
     """Load and expand cases from a fixture file or discovery root."""
     resolved = Path(path)
+    LOGGER.info("api load_case path=%s", resolved)
     if resolved.is_file():
-        return load_cases_from_path(resolved)
-    return discover_cases(resolved)
+        loaded = load_cases_from_path(resolved)
+        LOGGER.info("api load_case file=%s cases=%s", resolved, len(loaded))
+        return loaded
+    loaded = discover_cases(resolved)
+    LOGGER.info("api load_case dir=%s cases=%s", resolved, len(loaded))
+    return loaded
 
 
 def run_case(
@@ -27,6 +35,12 @@ def run_case(
     timeout_seconds: float | None = None,
 ) -> RunResult:
     """Execute a single resolved case."""
+    LOGGER.info(
+        "api run_case id=%s safe_defaults=%s timeout=%s",
+        case.case_id,
+        safe_defaults,
+        timeout_seconds,
+    )
     config = EngineConfig(
         safe_defaults=safe_defaults,
         max_diff=max_diff,
@@ -35,7 +49,9 @@ def run_case(
             timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
         ),
     )
-    return execute_case(case, config)
+    result = execute_case(case, config)
+    LOGGER.info("api run_case id=%s outcome=%s", case.case_id, result.outcome.value)
+    return result
 
 
 def run_cases(
@@ -47,6 +63,13 @@ def run_cases(
     timeout_seconds: float | None = None,
 ) -> list[RunResult]:
     """Execute many resolved cases."""
+    LOGGER.info(
+        "api run_cases count=%s jobs=%s safe_defaults=%s timeout=%s",
+        len(cases),
+        jobs,
+        safe_defaults,
+        timeout_seconds,
+    )
     config = EngineConfig(
         safe_defaults=safe_defaults,
         max_diff=max_diff,
@@ -55,4 +78,6 @@ def run_cases(
             timeout_seconds if timeout_seconds is not None else DEFAULT_TIMEOUT_SECONDS
         ),
     )
-    return execute_cases(cases, config)
+    results = execute_cases(cases, config)
+    LOGGER.info("api run_cases completed count=%s", len(results))
+    return results

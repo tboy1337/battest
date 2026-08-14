@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -71,6 +72,20 @@ def test_copy_packaged_exe_on_windows(
     artifact.write_bytes(b"MZ")
     destination = getattr(module, "copy_packaged_exe")(artifact)
     assert destination.read_bytes() == b"MZ"
+
+
+def test_windows_release_env_sets_repro_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_build_stub_module()
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    monkeypatch.delenv("RUSTFLAGS", raising=False)
+    env = getattr(module, "windows_release_env")()
+    assert "/Brepro" in env["RUSTFLAGS"]
+    assert "debuginfo=0" in env["RUSTFLAGS"]
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    posix_env = getattr(module, "windows_release_env")()
+    assert posix_env.get("RUSTFLAGS", "") == os.environ.get("RUSTFLAGS", "")
 
 
 def test_main_missing_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

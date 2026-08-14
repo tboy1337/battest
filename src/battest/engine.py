@@ -107,13 +107,20 @@ def require_windows() -> None:
         raise EngineError("battest run requires Windows cmd.exe")
 
 
+def system32_executable(name: str) -> str:
+    """Return System32\\name when that file exists, otherwise the bare name."""
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    candidate = Path(system_root) / "System32" / name
+    if candidate.is_file():
+        LOGGER.debug("resolved system32 executable %s", candidate)
+        return str(candidate)
+    LOGGER.debug("system32 executable %s missing; using bare name %s", candidate, name)
+    return name
+
+
 def cmd_executable() -> str:
     """Return the absolute path to cmd.exe when possible."""
-    system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    candidate = Path(system_root) / "System32" / "cmd.exe"
-    if candidate.is_file():
-        return str(candidate)
-    return "cmd.exe"
+    return system32_executable("cmd.exe")
 
 
 def build_cmd_line(wrapper: Path, args: list[str]) -> list[str]:
@@ -125,9 +132,10 @@ def build_cmd_line(wrapper: Path, args: list[str]) -> list[str]:
 def kill_process_tree(pid: int) -> None:
     """Kill a process and its descendants on Windows."""
     LOGGER.warning("killing process tree pid=%s", pid)
+    taskkill = system32_executable("taskkill.exe")
     try:
         completed = subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            [taskkill, "/F", "/T", "/PID", str(pid)],
             check=False,
             capture_output=True,
             text=True,
@@ -266,13 +274,36 @@ def collapse_path_keys(env: dict[str, str]) -> str:
     return kept_key
 
 
+def _overlay_case_env(env: dict[str, str], case_env: dict[str, str]) -> None:
+    """Apply fixture env. PATH replaces inherited PATH regardless of key case."""
+    overlay: tuple[str, str] | None = None
+    for key, value in case_env.items():
+        if key.upper() == "PATH":
+            overlay = (str(key), str(value))
+            continue
+        env[str(key)] = str(value)
+    if overlay is None:
+        LOGGER.debug("fixture env has no PATH overlay")
+        return
+    overlay_key, overlay_path = overlay
+    inherited_key = collapse_path_keys(env)
+    env.pop(inherited_key, None)
+    env[overlay_key] = overlay_path
+    LOGGER.debug(
+        "fixture PATH overlay key=%s replaced inherited key=%s",
+        overlay_key,
+        inherited_key,
+    )
+
+
 def _combined_env(
     case: Case,
     work_dir: Path,
     mock_dir: Path | None,
 ) -> dict[str, str]:
     env = {str(key): str(value) for key, value in os.environ.items()}
-    env.update(case.env)
+    collapse_path_keys(env)
+    _overlay_case_env(env, case.env)
     env["NoDefaultCurrentDirectoryInEXEPath"] = "1"
     path_key = collapse_path_keys(env)
     if mock_dir is not None:
@@ -442,7 +473,22 @@ def _evaluate_after_run(
     timed_out: bool,
 ) -> RunResult:
     captured_env = _snapshot_env(work_dir, encoding)
-    mock_calls = read_call_logs(mock_dir) if mock_dir is not None else {}
+    try:
+        mock_calls = read_call_logs(mock_dir) if mock_dir is not None else {}
+    except MockError as exc:
+        LOGGER.error("cannot read call logs for %s: %s", case.case_id, exc)
+        return RunResult(
+            case_id=case.case_id,
+            description=case.description,
+            outcome=Outcome.ERROR,
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            env=captured_env,
+            duration_seconds=duration,
+            error_message=str(exc),
+            warnings=warnings,
+        )
     if timed_out:
         return RunResult(
             case_id=case.case_id,

@@ -20,12 +20,19 @@ LOGGER = get_logger("discover")
 
 
 def default_root(cwd: Path | None = None) -> Path:
-    """Return ./tests when it exists, otherwise the current directory."""
+    """Return ./tests when it contains battest fixtures, otherwise cwd."""
     base = Path.cwd() if cwd is None else cwd
     tests_dir = base / "tests"
     if tests_dir.is_dir():
-        LOGGER.info("default discovery root %s", tests_dir)
-        return tests_dir
+        try:
+            fixtures = iter_fixture_files(tests_dir)
+        except SchemaError as exc:
+            LOGGER.warning("cannot scan %s for fixtures: %s", tests_dir, exc)
+        else:
+            if fixtures:
+                LOGGER.info("default discovery root %s", tests_dir)
+                return tests_dir
+            LOGGER.info("ignoring empty tests directory %s", tests_dir)
     LOGGER.info("default discovery root %s", base)
     return base
 

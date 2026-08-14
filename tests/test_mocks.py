@@ -123,6 +123,16 @@ def test_read_call_logs_missing_dir(tmp_path: Path) -> None:
     assert read_call_logs(tmp_path) == {}
 
 
+def test_read_call_logs_unreadable_raises(tmp_path: Path) -> None:
+    mock_dir = tmp_path / "_battest_mocks"
+    call_dir = mock_dir / "_calls"
+    call_dir.mkdir(parents=True)
+    log_path = call_dir / "ipconfig.log"
+    log_path.mkdir()
+    with pytest.raises(MockError, match="cannot read call log"):
+        read_call_logs(mock_dir)
+
+
 def test_warn_internal_absolute_paths() -> None:
     warnings = warn_internal_absolute_paths(r"del C:\Windows\Temp\x.txt")
     assert warnings

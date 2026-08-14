@@ -30,8 +30,10 @@ Mitigations that **are not** included:
 - Blocking `del C:\...` / `rd /s` internals
 - Network isolation
 - Registry virtualization
-- Timeouts on fixture `regex` matchers (catastrophic patterns can hang the
-  runner; treat fixture authors as trusted)
+- Timeouts on every fixture `regex` matcher (catastrophic patterns can still
+  hang the runner). Nested quantifiers such as `(a+)+` and patterns longer
+  than 512 characters are rejected at load time; treat remaining fixture
+  authors as trusted
 
 For untrusted or destructive suites, use a disposable VM or CI
 `windows-latest` runner, enable `--safe-defaults`, and mock every external the

@@ -4,6 +4,12 @@ The `stub/` crate is the native helper battest copies as `<command>.exe` when
 mocking external Windows commands. Runtime Python still only needs the
 prebuilt PE at `src/battest/data/battest_stub.exe`.
 
+The packaged PE is rebuilt on Windows with the toolchain in
+`rust-toolchain.toml` (currently 1.97.1) and MSVC `/Brepro` plus
+`-C debuginfo=0`. CI fails if that rebuild differs from the committed file.
+There is no cross-compile path; refresh the PE on Windows after stub source
+or toolchain changes.
+
 ## Layout
 
 ```text
@@ -17,7 +23,7 @@ stub/tests/cli.rs    # runs the compiled stub like PATH mocks do
 
 ## Commands
 
-From the repository root (Rust stable with `rustfmt`, `clippy`, and
+From the repository root (Rust 1.97.1 with `rustfmt`, `clippy`, and
 `llvm-tools-preview`, plus `cargo-llvm-cov`):
 
 ```text
@@ -38,8 +44,8 @@ coverage as the branch metric. Install the collector with
 Each logged line is a JSON array of argv strings. Missing sidecar files still
 mean empty stdout/stderr and exit `0`. Invalid `.exit` content is also treated
 as exit `0`. If a sidecar or call log exists but cannot be read or written
-(permission error, the path is a directory), the stub exits `1` instead of
-swallowing the error.
+(permission error, the path is a directory), the stub writes
+`battest-stub: ...` to stderr and exits `1` instead of swallowing the error.
 Rebuild the packaged Windows stub after changing the crate (Windows only copies
 the PE into package data):
 
@@ -47,5 +53,6 @@ the PE into package data):
 python scripts/build_stub.py
 ```
 
-`python scripts/verify.py` runs the format, type-check, clippy, test, and
-coverage commands above alongside the Python checks.
+`python scripts/verify.py` runs the format, type-check, clippy, cargo audit,
+test, and coverage commands above alongside the Python checks. On Windows it
+also rebuilds the PE and fails if `src/battest/data/battest_stub.exe` drifted.

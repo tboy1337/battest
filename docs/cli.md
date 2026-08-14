@@ -8,7 +8,7 @@ battest [--version] run [path] [--junit-xml FILE] [--jobs N]
 
 | Flag | Meaning |
 |---|---|
-| `path` | Fixture file or directory. Default: `./tests` or cwd |
+| `path` | Fixture file or directory. Default: `./tests` when that directory contains battest fixtures (`*.battest.yaml` or `expect.yaml` beside `input.cmd`); otherwise the current directory |
 | `--version` | Print the battest version and exit |
 | `--junit-xml` | Write xunit2 JUnit XML. When this flag is set, usage, schema, empty-discovery, and engine errors (exit 2) still write a one-testcase error suite named `battest` |
 | `--jobs` | Parallel case execution (each case has its own temp dir). Must be between 1 and 256 inclusive |

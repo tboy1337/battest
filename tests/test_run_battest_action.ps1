@@ -89,9 +89,14 @@ Describe 'Invoke-BattestAction' {
     It 'creates the JUnit placeholder, invokes python, and records the output path' {
         $code = Invoke-BattestAction
         $code | Should -Be 0
-        $junit = Join-Path -Path $script:Work -ChildPath 'battest-junit.xml'
+        $output = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+        $output | Should -Match 'junit-xml='
+        if ($output -notmatch 'junit-xml=(.+)$') {
+            throw 'GITHUB_OUTPUT did not contain junit-xml'
+        }
+        $junit = $Matches[1].Trim()
         Test-Path -LiteralPath $junit | Should -BeTrue
-        (Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw) | Should -Match 'junit-xml='
+        [System.IO.Path]::GetFileName($junit) | Should -Match '^battest-junit-[0-9a-f]{32}\.xml$'
         $script:CapturedArgs[0] | Should -Be '-m'
         $script:CapturedArgs[1] | Should -Be 'battest'
         $script:CapturedArgs | Should -Contain '--safe-defaults'
@@ -104,8 +109,11 @@ Describe 'Invoke-BattestAction' {
     It 'passes through a non-zero battest exit code' {
         Mock Invoke-BattestPython { return 2 }
         Invoke-BattestAction | Should -Be 2
-        $junit = Join-Path -Path $script:Work -ChildPath 'battest-junit.xml'
-        Test-Path -LiteralPath $junit | Should -BeTrue
+        $output = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+        if ($output -notmatch 'junit-xml=(.+)$') {
+            throw 'GITHUB_OUTPUT did not contain junit-xml'
+        }
+        Test-Path -LiteralPath $Matches[1].Trim() | Should -BeTrue
     }
 
     It 'does not echo extra-args tokens' {
@@ -120,7 +128,11 @@ Describe 'Invoke-BattestAction' {
     It 'keeps Action junit and safe-defaults flags after extra-args' {
         $env:BATTEST_EXTRA_ARGS = '["--no-safe-defaults","--junit-xml","C:\\other.xml","--jobs","1"]'
         Invoke-BattestAction | Should -Be 0
-        $junit = Join-Path -Path $script:Work -ChildPath 'battest-junit.xml'
+        $output = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+        if ($output -notmatch 'junit-xml=(.+)$') {
+            throw 'GITHUB_OUTPUT did not contain junit-xml'
+        }
+        $junit = $Matches[1].Trim()
         $safeLast = -1
         $junitLast = -1
         for ($index = 0; $index -lt $script:CapturedArgs.Count; $index++) {
@@ -137,5 +149,25 @@ Describe 'Invoke-BattestAction' {
         $script:CapturedArgs[$safeLast] | Should -Be '--safe-defaults'
         $script:CapturedArgs[$junitLast + 1] | Should -Be $junit
         $script:CapturedArgs | Should -Contain '--jobs'
+    }
+
+    It 'uses a unique JUnit path per invocation' {
+        Invoke-BattestAction | Should -Be 0
+        $firstOutput = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+        if ($firstOutput -notmatch 'junit-xml=(.+)$') {
+            throw 'first GITHUB_OUTPUT did not contain junit-xml'
+        }
+        $first = $Matches[1].Trim()
+        $env:GITHUB_OUTPUT = Join-Path -Path $script:Work -ChildPath 'github-output-2.txt'
+        New-Item -ItemType File -Path $env:GITHUB_OUTPUT | Out-Null
+        Invoke-BattestAction | Should -Be 0
+        $secondOutput = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+        if ($secondOutput -notmatch 'junit-xml=(.+)$') {
+            throw 'second GITHUB_OUTPUT did not contain junit-xml'
+        }
+        $second = $Matches[1].Trim()
+        $first | Should -Not -Be $second
+        Test-Path -LiteralPath $first | Should -BeTrue
+        Test-Path -LiteralPath $second | Should -BeTrue
     }
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import runpy
 import sys
@@ -344,6 +345,20 @@ def test_load_case_file_and_dir(tmp_path: Path) -> None:
     assert len(from_file) == 1
     assert len(from_dir) == 1
     assert from_file[0].description == "ok"
+
+
+def test_load_case_logs(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    manifest = tmp_path / "ok.battest.yaml"
+    manifest.write_text(
+        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.INFO, logger="battest.api"):
+        loaded = load_case(manifest)
+    assert len(loaded) == 1
+    assert "api load_case" in caplog.text
 
 
 def test_run_case_and_run_cases_require_windows(

@@ -119,6 +119,11 @@ pub fn resolve_exe(current: io::Result<PathBuf>) -> PathBuf {
     current.unwrap_or_else(|_| PathBuf::from("stub.exe"))
 }
 
+fn write_io_error(stderr: &mut impl Write, context: &str, err: &io::Error) -> u8 {
+    let _ = writeln!(stderr, "battest-stub: {context}: {err}");
+    1
+}
+
 /// Execute the stub using `exe` and `args`, writing sidecars to `stdout`/`stderr`.
 #[must_use]
 pub fn run_with(
@@ -129,26 +134,27 @@ pub fn run_with(
 ) -> u8 {
     let context = stub_context(exe);
     let log_path = call_log_path(&context.directory, &context.stem);
-    if log_path.is_file() && append_args(&log_path, args).is_err() {
-        return 1;
+    if log_path.is_file() {
+        if let Err(err) = append_args(&log_path, args) {
+            return write_io_error(stderr, "call log", &err);
+        }
     }
-    if pipe_file(
+    if let Err(err) = pipe_file(
         &sidecar(&context.directory, &context.stem, "stdout"),
         stdout,
-    )
-    .is_err()
-    {
-        return 1;
+    ) {
+        return write_io_error(stderr, "stdout sidecar", &err);
     }
-    if pipe_file(
+    if let Err(err) = pipe_file(
         &sidecar(&context.directory, &context.stem, "stderr"),
         stderr,
-    )
-    .is_err()
-    {
-        return 1;
+    ) {
+        return write_io_error(stderr, "stderr sidecar", &err);
     }
-    read_exit_code(&sidecar(&context.directory, &context.stem, "exit")).unwrap_or(1)
+    match read_exit_code(&sidecar(&context.directory, &context.stem, "exit")) {
+        Ok(code) => code,
+        Err(err) => write_io_error(stderr, "exit sidecar", &err),
+    }
 }
 
 /// Run the stub for `current` executable and `args`.
@@ -438,6 +444,11 @@ mod tests {
             &mut ignored_err,
         );
         assert_eq!(failed, 1);
+        let err_text = String::from_utf8_lossy(&ignored_err);
+        assert!(
+            err_text.contains("battest-stub:"),
+            "expected diagnostic, got {err_text:?}"
+        );
 
         fs::create_dir_all(dir.join("exitdir.exit")).expect("exit sidecar dir");
         let mut exit_out = Vec::new();
@@ -449,6 +460,11 @@ mod tests {
             &mut exit_err,
         );
         assert_eq!(exit_failed, 1);
+        let exit_err_text = String::from_utf8_lossy(&exit_err);
+        assert!(
+            exit_err_text.contains("battest-stub:"),
+            "expected diagnostic, got {exit_err_text:?}"
+        );
         remove_temp_dir(&dir);
     }
 

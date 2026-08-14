@@ -19,6 +19,7 @@ from battest.assertlib import (
     newline_requirement_failure,
     unified_diff_text,
 )
+from battest.constants import MAX_REGEX_PATTERN_LENGTH
 from battest.models import (
     CallExpectation,
     Case,
@@ -221,6 +222,18 @@ def test_match_output_equals_file_rejects_absolute(tmp_path: Path) -> None:
 def test_invalid_regex_is_rejected_at_model() -> None:
     with pytest.raises(ValueError, match="invalid regex"):
         OutputMatcher(regex="(")
+
+
+def test_nested_quantifier_regex_is_rejected_at_model() -> None:
+    with pytest.raises(ValueError, match="nested quantifiers"):
+        OutputMatcher(regex="(a+)+")
+    with pytest.raises(ValueError, match="nested quantifiers"):
+        OutputMatcher(regex="(a*)*")
+
+
+def test_regex_pattern_length_is_capped() -> None:
+    with pytest.raises(ValueError, match="exceeds"):
+        OutputMatcher(regex="a" * (MAX_REGEX_PATTERN_LENGTH + 1))
 
 
 def test_match_output_invalid_regex_is_failure() -> None:
