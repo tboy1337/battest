@@ -530,8 +530,7 @@ def test_ci_dependency_graph_does_not_block_release() -> None:
     submit = next(
         step
         for step in dependency_graph["steps"]
-        if isinstance(step, dict)
-        and step.get("name") == "Submit dependency snapshot"
+        if isinstance(step, dict) and step.get("name") == "Submit dependency snapshot"
     )
     assert submit.get("continue-on-error") is True
     needs = check_version["needs"]
