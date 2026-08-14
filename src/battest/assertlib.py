@@ -43,28 +43,59 @@ def apply_newline_mode(text: str, mode: NewlineMode) -> str:
         case NewlineMode.AUTO | NewlineMode.LF:
             return text.replace("\r\n", "\n").replace("\r", "\n")
         case NewlineMode.CRLF:
-            return text
+            return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
         case _:
             unreachable: Never = mode
             raise ValueError(f"unhandled newline mode: {unreachable}")
 
 
-def _read_equals_file(source_dir: Path, relative: str) -> str | None:
-    path = Path(relative) if Path(relative).is_absolute() else source_dir / relative
+def newline_requirement_failure(actual: str, mode: NewlineMode) -> str | None:
+    """Return a failure message when actual line endings violate mode."""
+    match mode:
+        case NewlineMode.AUTO:
+            return None
+        case NewlineMode.LF:
+            if "\r" in actual:
+                return "contained CR bytes; newline: lf requires LF-only line endings"
+            return None
+        case NewlineMode.CRLF:
+            if "\n" in actual.replace("\r\n", ""):
+                return "contained lone LF; newline: crlf requires CRLF line endings"
+            return None
+        case _:
+            unreachable: Never = mode
+            raise ValueError(f"unhandled newline mode: {unreachable}")
+
+
+def confined_source_path(source_dir: Path, relative: str) -> Path | None:
+    """Return source_dir/relative when it stays inside source_dir, else None."""
+    if Path(relative).is_absolute():
+        LOGGER.warning("path %s is absolute; rejected", relative)
+        return None
+    return confined_work_path(source_dir, relative)
+
+
+def _read_equals_file(source_dir: Path, relative: str) -> tuple[str | None, str | None]:
+    path = confined_source_path(source_dir, relative)
+    if path is None:
+        return None, f"equals_file escapes source directory: {relative}"
     try:
-        return path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8"), None
+    except FileNotFoundError:
+        LOGGER.error("equals_file missing %s", path)
+        return None, f"equals_file not found: {relative}"
     except OSError as exc:
         LOGGER.error("equals_file unreadable %s: %s", path, exc)
-        return None
+        return None, f"equals_file unreadable: {relative} ({exc})"
 
 
 def confined_work_path(work_dir: Path, relative: str) -> Path | None:
     """Return work_dir/relative when it stays inside work_dir, else None."""
     resolved_root = work_dir.resolve()
-    candidate = (work_dir / relative).resolve()
     try:
+        candidate = (work_dir / relative).resolve()
         candidate.relative_to(resolved_root)
-    except ValueError:
+    except (OSError, ValueError):
         LOGGER.warning("path %s escapes work dir %s", relative, work_dir)
         return None
     return candidate
@@ -99,6 +130,9 @@ def match_output(
         return []
     failures: list[AssertionFailure] = []
     actual_cmp = apply_newline_mode(actual, matcher.newline)
+    requirement = newline_requirement_failure(actual, matcher.newline)
+    if requirement is not None:
+        failures.append(_fail(stream_name, f"{stream_name} {requirement}"))
     if matcher.empty is True and actual_cmp.strip() != "":
         failures.append(
             _fail(
@@ -124,16 +158,17 @@ def match_output(
                 )
             )
     if matcher.equals_file is not None:
-        expected_text = _read_equals_file(source_dir, matcher.equals_file)
-        if expected_text is None:
+        expected_text, error = _read_equals_file(source_dir, matcher.equals_file)
+        if error is not None:
             failures.append(
                 _fail(
                     stream_name,
-                    f"{stream_name} equals_file not found: {matcher.equals_file}",
+                    f"{stream_name} {error}",
                     expected=matcher.equals_file,
                 )
             )
         else:
+            assert expected_text is not None
             expected_cmp = apply_newline_mode(expected_text, matcher.newline)
             if actual_cmp != expected_cmp:
                 failures.append(
@@ -158,15 +193,27 @@ def match_output(
             )
     if matcher.regex is not None:
         pattern = apply_newline_mode(matcher.regex, matcher.newline)
-        if re.search(pattern, actual_cmp, re.MULTILINE) is None:
+        try:
+            matched = re.search(pattern, actual_cmp, re.MULTILINE)
+        except re.error as exc:
             failures.append(
                 _fail(
                     stream_name,
-                    f"{stream_name} did not match regex",
+                    f"{stream_name} invalid regex: {exc}",
                     expected=matcher.regex,
                     actual=actual,
                 )
             )
+        else:
+            if matched is None:
+                failures.append(
+                    _fail(
+                        stream_name,
+                        f"{stream_name} did not match regex",
+                        expected=matcher.regex,
+                        actual=actual,
+                    )
+                )
     return failures
 
 
@@ -266,7 +313,10 @@ def match_files(
             except OSError as exc:
                 LOGGER.error("failed to read %s: %s", path, exc)
                 failures.append(
-                    _fail("files", f"file not found for content check: {matcher.path}")
+                    _fail(
+                        "files",
+                        f"failed to read {matcher.path} for content check: {exc}",
+                    )
                 )
                 continue
             if matcher.contains is not None and matcher.contains not in text:
@@ -289,15 +339,13 @@ def match_files(
                     )
                 )
             if matcher.equals_file is not None:
-                expected_text = _read_equals_file(source_dir, matcher.equals_file)
-                if expected_text is None:
-                    failures.append(
-                        _fail(
-                            "files",
-                            f"equals_file not found: {matcher.equals_file}",
-                        )
-                    )
+                expected_text, error = _read_equals_file(
+                    source_dir, matcher.equals_file
+                )
+                if error is not None:
+                    failures.append(_fail("files", error))
                     continue
+                assert expected_text is not None
                 if text != expected_text:
                     failures.append(
                         _fail(

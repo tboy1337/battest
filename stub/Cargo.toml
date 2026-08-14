@@ -12,6 +12,8 @@ description = """\
 [[bin]]
 name = "battest-stub"
 path = "src/main.rs"
+test = false
+bench = false
 
 [lints.rust]
 unsafe_code = "forbid"

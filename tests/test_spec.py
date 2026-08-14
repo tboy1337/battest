@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import battest.spec as spec_mod
 from battest.spec import (
     SpecCatalog,
     _load_yaml_mapping,
@@ -66,3 +67,49 @@ def test_catalog_helpers_and_packaged_fallback(
     monkeypatch.setattr(Path, "is_file", missing_adjacent)
     path = packaged_data_path("commands.yaml")
     assert path.name == "commands.yaml"
+
+
+def test_packaged_data_path_survives_as_file_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    previous_root = spec_mod._EXTRACT_ROOT
+    previous_extracted = dict(spec_mod._EXTRACTED)
+    spec_mod._EXTRACT_ROOT = None
+    spec_mod._EXTRACTED.clear()
+    ephemeral = tmp_path / "ephemeral.yaml"
+    ephemeral.write_text("ok: 1\n", encoding="utf-8")
+
+    class FakeCM:
+        def __enter__(self) -> Path:
+            return ephemeral
+
+        def __exit__(self, *_args: object) -> None:
+            if ephemeral.exists():
+                ephemeral.unlink()
+            return None
+
+        def __truediv__(self, _other: object) -> FakeCM:
+            return self
+
+    monkeypatch.setattr("battest.spec.resources.files", lambda _name: FakeCM())
+    monkeypatch.setattr("battest.spec.resources.as_file", lambda _item: FakeCM())
+    original = Path.is_file
+
+    def adjacent_missing(self: Path) -> bool:
+        if self.parent.name == "data" and self.name == "gone.yaml":
+            return False
+        return original(self)
+
+    monkeypatch.setattr(Path, "is_file", adjacent_missing)
+    try:
+        path = packaged_data_path("gone.yaml")
+        assert not ephemeral.exists()
+        assert path.is_file()
+        assert path.read_text(encoding="utf-8") == "ok: 1\n"
+    finally:
+        created = spec_mod._EXTRACT_ROOT
+        spec_mod._EXTRACT_ROOT = previous_root
+        spec_mod._EXTRACTED.clear()
+        spec_mod._EXTRACTED.update(previous_extracted)
+        if created is not None:
+            created.cleanup()

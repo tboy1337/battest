@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from battest.assertlib import confined_work_path
 from battest.constants import HELPER_NAMES
 from battest.logging_config import get_logger
 
@@ -35,10 +36,10 @@ def snapshot_files(root: Path) -> dict[str, bytes]:
 
 
 def file_text(root: Path, relative: str) -> str | None:
-    """Return decoded text for a relative path, or None if missing."""
-    path = root / relative
-    if not path.is_file():
-        LOGGER.debug("file missing: %s", path)
+    """Return decoded text for a relative path, or None if missing or escaping."""
+    path = confined_work_path(root, relative)
+    if path is None or not path.is_file():
+        LOGGER.debug("file missing or escaped: %s", relative)
         return None
     try:
         return path.read_text(encoding="utf-8", errors="replace")

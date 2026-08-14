@@ -6,6 +6,8 @@ from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 import re
+import shutil
+import tempfile
 from typing import Mapping
 
 import yaml
@@ -15,6 +17,8 @@ from battest.logging_config import get_logger
 
 LOGGER = get_logger("spec")
 _TILDE_RE = re.compile(PERCENT_TILDE_PATTERN, re.IGNORECASE)
+_EXTRACT_ROOT: tempfile.TemporaryDirectory[str] | None = None
+_EXTRACTED: dict[str, Path] = {}
 
 
 class SpecCatalog:
@@ -107,16 +111,33 @@ def _load_yaml_mapping(path: Path) -> dict[str, object]:
 
 
 def packaged_data_path(name: str) -> Path:
-    """Return a filesystem path to a packaged data file."""
+    """Return a filesystem path to a packaged data file that outlives this call."""
     adjacent = Path(__file__).resolve().parent / "data" / name
     if adjacent.is_file():
         LOGGER.debug("packaged data adjacent path=%s", adjacent)
         return adjacent
+    cached = _EXTRACTED.get(name)
+    if cached is not None and cached.is_file():
+        LOGGER.debug("packaged data cached path=%s", cached)
+        return cached
     traversable = resources.files("battest") / "data" / name
     with resources.as_file(traversable) as path:
-        resolved = Path(path)
-    LOGGER.debug("packaged data resource path=%s", resolved)
-    return resolved
+        source = Path(path)
+        # Process-lifetime extract dir so zip/egg installs keep a real path.
+        global _EXTRACT_ROOT  # pylint: disable=global-statement
+        if _EXTRACT_ROOT is None:
+            # Kept for process lifetime; closing would delete extracted files.
+            _EXTRACT_ROOT = (
+                tempfile.TemporaryDirectory(  # pylint: disable=consider-using-with
+                    prefix="battest-data-"
+                )
+            )
+        destination = Path(_EXTRACT_ROOT.name) / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        _EXTRACTED[name] = destination
+        LOGGER.debug("packaged data extracted path=%s", destination)
+        return destination
 
 
 @lru_cache(maxsize=1)

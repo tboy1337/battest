@@ -32,6 +32,125 @@ def _run(command: list[str], skip: bool) -> int:
     return completed.returncode
 
 
+def build_steps(
+    *,
+    python: str,
+    cargo: str,
+    cargo_audit: str | None,
+    skip_format: bool,
+    skip_lint: bool,
+    skip_audit: bool,
+    skip_tests: bool,
+) -> list[tuple[list[str], bool]]:
+    """Return (command, skip) pairs for the local verification pipeline."""
+    skip_rust_audit = skip_audit or cargo_audit is None
+    return [
+        ([python, "scripts/generate_spec_data.py", "--check"], False),
+        (
+            [python, "-m", "black", "--check", "src", "tests", "scripts"],
+            skip_format,
+        ),
+        (
+            [python, "-m", "isort", "--check-only", "src", "tests", "scripts"],
+            skip_format,
+        ),
+        (
+            [
+                python,
+                "-m",
+                "autopep8",
+                "-r",
+                "--diff",
+                "--exit-code",
+                "--select=W291,W293",
+                "src",
+                "tests",
+                "scripts",
+            ],
+            skip_format,
+        ),
+        (
+            [cargo, "fmt", "--all", "--check", "--manifest-path", "stub/Cargo.toml"],
+            skip_format,
+        ),
+        ([python, "-m", "mypy", "src/battest", "tests", "scripts"], skip_lint),
+        ([python, "-m", "pylint", "src/battest"], skip_lint),
+        (
+            [python, "-m", "pyproject_fmt", "--check", "pyproject.toml"],
+            skip_format,
+        ),
+        (
+            [
+                python,
+                "-m",
+                "bandit",
+                "-r",
+                "src/battest",
+                "-c",
+                "pyproject.toml",
+                "-ll",
+                "-q",
+            ],
+            skip_lint,
+        ),
+        (
+            [
+                cargo,
+                "check",
+                "--manifest-path",
+                "stub/Cargo.toml",
+                "--all-targets",
+                "--locked",
+            ],
+            skip_lint,
+        ),
+        (
+            [
+                cargo,
+                "clippy",
+                "--manifest-path",
+                "stub/Cargo.toml",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ],
+            skip_lint,
+        ),
+        (
+            [
+                python,
+                "-m",
+                "pip_audit",
+                "-r",
+                "requirements.txt",
+                "-r",
+                "requirements-dev.txt",
+            ],
+            skip_audit,
+        ),
+        (
+            [cargo, "audit", "--file", "stub/Cargo.lock"],
+            skip_rust_audit,
+        ),
+        ([python, "-m", "pytest"], skip_tests),
+        ([python, "scripts/check_coverage.py"], skip_tests),
+        (
+            [
+                cargo,
+                "test",
+                "--manifest-path",
+                "stub/Cargo.toml",
+                "--locked",
+                "--all-targets",
+            ],
+            skip_tests,
+        ),
+        ([python, "scripts/check_rust_coverage.py"], skip_tests),
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run format, lint, type-check, audit, and pytest."""
     _configure_logging()
@@ -47,86 +166,17 @@ def main(argv: list[str] | None = None) -> int:
         LOGGER.error("cargo is required for stub crate checks")
         return 2
     cargo_audit = shutil.which("cargo-audit")
-    steps: list[tuple[list[str], bool]] = [
-        ([python, "scripts/generate_spec_data.py", "--check"], False),
-        (
-            [python, "-m", "black", "--check", "src", "tests", "scripts"],
-            args.skip_format,
-        ),
-        (
-            [python, "-m", "isort", "--check-only", "src", "tests", "scripts"],
-            args.skip_format,
-        ),
-        (
-            [cargo, "fmt", "--all", "--check", "--manifest-path", "stub/Cargo.toml"],
-            args.skip_format,
-        ),
-        ([python, "-m", "mypy", "src/battest", "tests", "scripts"], args.skip_lint),
-        ([python, "-m", "pylint", "src/battest"], args.skip_lint),
-        (
-            [python, "-m", "pyproject_fmt", "--check", "pyproject.toml"],
-            args.skip_format,
-        ),
-        (
-            [
-                python,
-                "-m",
-                "bandit",
-                "-r",
-                "src/battest",
-                "-c",
-                "pyproject.toml",
-                "-ll",
-                "-q",
-            ],
-            args.skip_lint,
-        ),
-        (
-            [
-                cargo,
-                "clippy",
-                "--manifest-path",
-                "stub/Cargo.toml",
-                "--all-targets",
-                "--locked",
-                "--",
-                "-D",
-                "warnings",
-            ],
-            args.skip_lint,
-        ),
-        (
-            [
-                python,
-                "-m",
-                "pip_audit",
-                "-r",
-                "requirements.txt",
-                "-r",
-                "requirements-dev.txt",
-            ],
-            args.skip_audit,
-        ),
-        (
-            [cargo, "audit", "--file", "stub/Cargo.lock"],
-            args.skip_audit or cargo_audit is None,
-        ),
-        ([python, "-m", "pytest"], args.skip_tests),
-        ([python, "scripts/check_coverage.py"], args.skip_tests),
-        (
-            [
-                cargo,
-                "test",
-                "--manifest-path",
-                "stub/Cargo.toml",
-                "--locked",
-                "--all-targets",
-            ],
-            args.skip_tests,
-        ),
-    ]
     if cargo_audit is None:
         LOGGER.info("cargo-audit not on PATH; skipping rust advisory audit")
+    steps = build_steps(
+        python=python,
+        cargo=cargo,
+        cargo_audit=cargo_audit,
+        skip_format=args.skip_format,
+        skip_lint=args.skip_lint,
+        skip_audit=args.skip_audit,
+        skip_tests=args.skip_tests,
+    )
     for command, skip in steps:
         code = _run(command, skip)
         if code != 0:

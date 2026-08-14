@@ -8,7 +8,7 @@ jobs:
   test-batch:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: tboy1337/battest@v0.1.0
         with:
           path: tests
@@ -20,7 +20,7 @@ Inputs:
 | Name | Default | Meaning |
 |---|---|---|
 | `path` | empty (CLI default) | Discovery path |
-| `extra-args` | empty | Extra `battest run` arguments |
+| `extra-args` | empty | Extra `battest run` arguments. A JSON array of strings (starts with `[`) is parsed as argv; otherwise the value is split on spaces, so quoted paths with spaces are not supported in the space-split form |
 | `safe-defaults` | `true` | Stub destructive externals |
 | `python-version` | `3.14` | Python used to install battest |
 

@@ -36,7 +36,7 @@
       "additionalProperties": false,
       "properties": {
         "equals": { "type": "string" },
-        "equals_file": { "type": "string" },
+        "equals_file": { "type": "string", "minLength": 1 },
         "contains": { "type": "string" },
         "regex": { "type": "string" },
         "empty": { "type": "boolean" },
@@ -53,7 +53,14 @@
         "not_exists": { "type": "boolean" },
         "contains": { "type": "string" },
         "equals": { "type": "string" },
-        "equals_file": { "type": "string" }
+        "equals_file": { "type": "string", "minLength": 1 }
+      },
+      "not": {
+        "required": ["exists", "not_exists"],
+        "properties": {
+          "exists": { "const": true },
+          "not_exists": { "const": true }
+        }
       }
     },
     "envExpect": {
@@ -87,7 +94,11 @@
       "properties": {
         "args_contains": { "type": "string" },
         "not_called": { "type": "boolean" }
-      }
+      },
+      "anyOf": [
+        { "required": ["args_contains"] },
+        { "required": ["not_called"] }
+      ]
     },
     "mockSpec": {
       "type": "object",

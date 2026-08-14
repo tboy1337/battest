@@ -20,8 +20,9 @@ battest copies a small native stub as `ipconfig.exe` (not `.cmd`) into a temp
 directory and prepends that directory to `PATH`. Using `.exe` matters: a batch
 script that runs `ipconfig` without `CALL` never returns if the shadow is a
 `.cmd` file. Sidecar files (`ipconfig.stdout`, `ipconfig.stderr`,
-`ipconfig.exit`) supply canned output and the exit code. Each invocation
-appends argv to `_calls/ipconfig.log`.
+`ipconfig.exit`) supply canned output and the exit code. When call recording
+is enabled (the default), battest pre-creates `_calls/ipconfig.log` and each
+invocation appends argv.
 
 The stub binary is `src/battest/data/battest_stub.exe`, built from the
 `stub/` crate:
@@ -30,9 +31,15 @@ The stub binary is `src/battest/data/battest_stub.exe`, built from the
 python scripts/build_stub.py
 ```
 
-See [PATH mock stub crate](stub.md) for rustfmt, clippy, tests, and coverage.
+See [PATH mock stub crate](stub.md) for rustfmt, cargo check, clippy, tests,
+and coverage.
 
 `expect_calls` with `not_called: true` asserts the stub was never invoked.
+Each `expect_calls` entry must set `args_contains` or `not_called`.
+
+Set `record_calls: false` to skip creating `_calls/<command>.log`. The stub
+appends argv only when that log file already exists, so call recording stays
+off.
 
 ## Safe defaults
 

@@ -151,6 +151,13 @@ def test_iter_skips_vendor(tmp_path: Path) -> None:
     )
     found = iter_fixture_files(tmp_path)
     assert found == []
+    venv = tmp_path / "venv" / "nested"
+    venv.mkdir(parents=True)
+    (venv / "hidden.battest.yaml").write_text(
+        "description: venv-hidden\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    assert iter_fixture_files(tmp_path) == []
     path = tmp_path / "one.battest.yaml"
     path.write_text("description: one\nexpect:\n  exit_code: 0\n", encoding="utf-8")
     assert iter_fixture_files(path) == [path]

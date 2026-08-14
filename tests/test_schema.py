@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import ValidationError
 import pytest
 
 from battest.models import (
     CaseDocument,
+    EngineConfig,
     Expect,
     MockSpec,
     OutputMatcher,
@@ -316,7 +318,7 @@ def test_script_file_missing(tmp_path: Path) -> None:
         load_cases_from_path(manifest)
 
 
-def test_internal_mock_warning(tmp_path: Path) -> None:
+def test_internal_mock_is_schema_error(tmp_path: Path) -> None:
     _write_script(tmp_path, "run.cmd")
     manifest = tmp_path / "run.battest.yaml"
     manifest.write_text(
@@ -333,8 +335,8 @@ def test_internal_mock_warning(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    cases = load_cases_from_path(manifest)
-    assert any("internal" in item for item in cases[0].warnings)
+    with pytest.raises(SchemaError, match="internal"):
+        load_cases_from_path(manifest)
 
 
 def test_invalid_yaml(tmp_path: Path) -> None:
@@ -402,6 +404,10 @@ def test_merge_expect_and_mocks_none_overlay() -> None:
     }
     merged = merge_mocks({"net": MockSpec(exit_code=1)}, {"net": MockSpec(exit_code=2)})
     assert merged["net"].exit_code == 2
+    mixed = merge_mocks(
+        {"Format": MockSpec(exit_code=1)}, {"format": MockSpec(exit_code=3)}
+    )
+    assert mixed == {"format": MockSpec(exit_code=3)}
     skipped = merge_expect(Expect(exit_code=1), Expect(exit_code=None))
     assert skipped.exit_code == 1
 
@@ -555,3 +561,60 @@ def test_mock_exit_code_accepts_byte_boundaries() -> None:
     )
     assert document.mocks["ipconfig"].exit_code == 255
     assert document.mocks["net"].exit_code == 0
+
+
+def test_duplicate_param_ids_are_schema_error(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: matrix",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "params:",
+                "  - id: other",
+                "  - id: other",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="duplicate case id"):
+        load_cases_from_path(manifest)
+
+
+def test_empty_param_id_is_rejected() -> None:
+    with pytest.raises(SchemaError):
+        parse_document(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "params": [{"id": "  "}],
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_empty_file_matcher_path_is_rejected() -> None:
+    with pytest.raises(SchemaError):
+        parse_document(
+            {
+                "description": "t",
+                "expect": {"files": [{"path": ""}]},
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_schema_payload_call_expectation_requires_constraint() -> None:
+    payload = schema_payload()
+    call_schema = payload["$defs"]["callExpectation"]
+    assert "anyOf" in call_schema
+    file_schema = payload["$defs"]["fileMatcher"]
+    assert "not" in file_schema
+
+
+def test_engine_config_max_diff_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        EngineConfig(max_diff=0)

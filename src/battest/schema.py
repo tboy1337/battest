@@ -105,6 +105,8 @@ def _collect_warnings(document: CaseDocument, script_path: Path) -> list[str]:
             message = (
                 f"command '{name}' is a cmd.exe internal and cannot be PATH-mocked"
             )
+            if lowered in {key.lower() for key in document.mocks}:
+                raise SchemaError(message)
             LOGGER.warning("%s", message)
             warnings.append(message)
     try:
@@ -265,6 +267,7 @@ def expand_cases(
         list(document.allow),
     )
     cases.append(base)
+    seen_ids = {stem}
     for overlay in document.params:
         (
             args,
@@ -276,6 +279,9 @@ def expand_cases(
             allow,
         ) = _apply_overlay(document, overlay)
         case_id = f"{stem}[{overlay.id}]"
+        if case_id in seen_ids:
+            raise SchemaError(f"duplicate case id {case_id!r}: {source}")
+        seen_ids.add(case_id)
         cases.append(
             _case_from_document(
                 document,

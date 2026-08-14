@@ -80,6 +80,7 @@ Rust (PATH-mock stub crate in `stub/`):
 
 ```text
 cargo test --manifest-path stub/Cargo.toml --locked --all-targets
+python scripts/check_rust_coverage.py
 python scripts/build_stub.py
 ```
 

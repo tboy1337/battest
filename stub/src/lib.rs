@@ -2,8 +2,9 @@
 //!
 //! Copied as `<command>.exe` into a mock directory. Sidecar files:
 //! `<command>.stdout`, `<command>.stderr`, `<command>.exit`.
-//! Call log: `_calls/<command>.log`.
+//! Call log: `_calls/<command>.log` is appended only when that file already exists.
 
+use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -67,7 +68,9 @@ pub fn read_exit_code(path: &Path) -> u8 {
 /// Append a single argv line to the call log, creating parent directories.
 pub fn append_args(log_path: &Path, args: &[String]) -> io::Result<()> {
     if let Some(parent) = log_path.parent() {
-        fs::create_dir_all(parent)?;
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
     }
     let mut log_file = OpenOptions::new()
         .create(true)
@@ -77,17 +80,83 @@ pub fn append_args(log_path: &Path, args: &[String]) -> io::Result<()> {
     Ok(())
 }
 
+/// Use `current` when `env::current_exe` succeeds; otherwise `stub.exe`.
+#[must_use]
+pub fn resolve_exe(current: io::Result<PathBuf>) -> PathBuf {
+    current.unwrap_or_else(|_| PathBuf::from("stub.exe"))
+}
+
+/// Execute the stub using `exe` and `args`, writing sidecars to `stdout`/`stderr`.
+#[must_use]
+pub fn run_with(
+    exe: &Path,
+    args: &[String],
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> u8 {
+    let context = stub_context(exe);
+    let log_path = call_log_path(&context.directory, &context.stem);
+    if log_path.is_file() {
+        let _ = append_args(&log_path, args);
+    }
+    let _ = pipe_file(
+        &sidecar(&context.directory, &context.stem, "stdout"),
+        stdout,
+    );
+    let _ = pipe_file(
+        &sidecar(&context.directory, &context.stem, "stderr"),
+        stderr,
+    );
+    read_exit_code(&sidecar(&context.directory, &context.stem, "exit"))
+}
+
+/// Run the PATH-shadow stub for this process executable and argv.
+#[must_use]
+pub fn run() -> u8 {
+    let args: Vec<String> = env::args().skip(1).collect();
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
+    run_with(
+        &resolve_exe(env::current_exe()),
+        &args,
+        &mut stdout,
+        &mut stderr,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        append_args, call_log_path, pipe_file, read_exit_code, sidecar, stub_context,
+        append_args, call_log_path, pipe_file, read_exit_code, resolve_exe, run_with,
+        sidecar, stub_context,
     };
     use std::env;
     use std::fs;
+    use std::io::{self, Write};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    struct RestoreCwd(PathBuf);
+
+    impl Drop for RestoreCwd {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.0);
+        }
+    }
+
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("write failed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
 
     fn make_temp_dir() -> PathBuf {
         let seq = TEST_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -117,6 +186,39 @@ mod tests {
     }
 
     #[test]
+    fn stub_context_defaults_stem_when_file_stem_missing() {
+        let context = stub_context(Path::new("/"));
+        assert_eq!(context.stem, "stub");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stub_context_defaults_stem_when_not_utf8() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        let dir = make_temp_dir();
+        let name = OsString::from_wide(&[0xD800]);
+        let exe = dir.join(name);
+        let context = stub_context(&exe);
+        assert_eq!(context.stem, "stub");
+        remove_temp_dir(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stub_context_defaults_stem_when_not_utf8() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let dir = make_temp_dir();
+        let exe = dir.join(OsString::from_vec(vec![0xff]));
+        let context = stub_context(&exe);
+        assert_eq!(context.stem, "stub");
+        remove_temp_dir(&dir);
+    }
+
+    #[test]
     fn sidecar_and_call_log_paths() {
         let dir = Path::new("mockdir");
         assert_eq!(sidecar(dir, "net", "exit"), dir.join("net.exit"));
@@ -137,6 +239,9 @@ mod tests {
         let overflow = dir.join("overflow.exit");
         fs::write(&overflow, "256").expect("write overflow");
         assert_eq!(read_exit_code(&overflow), 0);
+        let empty = dir.join("empty.exit");
+        fs::write(&empty, "   \n").expect("write empty");
+        assert_eq!(read_exit_code(&empty), 0);
         let valid = dir.join("ok.exit");
         fs::write(&valid, "  2 \n").expect("write valid");
         assert_eq!(read_exit_code(&valid), 2);
@@ -160,6 +265,17 @@ mod tests {
     }
 
     #[test]
+    fn pipe_file_fails_when_destination_write_fails() {
+        let dir = make_temp_dir();
+        let present = dir.join("out.stdout");
+        fs::write(&present, b"payload").expect("write stdout sidecar");
+        let mut writer = FailingWriter;
+        assert!(pipe_file(&present, &mut writer).is_err());
+        assert!(writer.flush().is_ok());
+        remove_temp_dir(&dir);
+    }
+
+    #[test]
     fn append_args_creates_log_and_appends() {
         let dir = make_temp_dir();
         let log_path = call_log_path(&dir, "ipconfig");
@@ -170,5 +286,99 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines, ["/flushdns", "/all /x", ""]);
         remove_temp_dir(&dir);
+    }
+
+    #[test]
+    fn append_args_filename_only_writes_in_cwd() {
+        let dir = make_temp_dir();
+        let previous = env::current_dir().expect("cwd");
+        let _restore = RestoreCwd(previous);
+        env::set_current_dir(&dir).expect("chdir");
+        append_args(Path::new("flat.log"), &["z".to_owned()])
+            .expect("append filename-only");
+        let text = fs::read_to_string(dir.join("flat.log")).expect("read");
+        assert_eq!(text.lines().collect::<Vec<_>>(), ["z"]);
+        remove_temp_dir(&dir);
+    }
+
+    #[test]
+    fn append_args_when_path_has_no_parent() {
+        let err = append_args(Path::new(""), &["x".to_owned()]);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn append_args_fails_when_parent_is_a_file() {
+        let dir = make_temp_dir();
+        let blocker = dir.join("blocker");
+        fs::write(&blocker, b"x").expect("write blocker");
+        let log_path = blocker.join("child.log");
+        assert!(append_args(&log_path, &["a".to_owned()]).is_err());
+        remove_temp_dir(&dir);
+    }
+
+    #[test]
+    fn append_args_fails_when_path_is_directory() {
+        let dir = make_temp_dir();
+        assert!(append_args(&dir, &["a".to_owned()]).is_err());
+        remove_temp_dir(&dir);
+    }
+
+    #[test]
+    fn resolve_exe_uses_ok_path_or_fallback() {
+        let ok = PathBuf::from("mocks").join("net.exe");
+        assert_eq!(resolve_exe(Ok(ok.clone())), ok);
+        let fallback = resolve_exe(Err(io::Error::other("missing")));
+        assert_eq!(fallback, PathBuf::from("stub.exe"));
+    }
+
+    #[test]
+    fn run_with_sidecars_log_and_ignored_errors() {
+        let dir = make_temp_dir();
+        let exe = dir.join("tool.exe");
+        fs::write(dir.join("tool.stdout"), b"out").expect("stdout");
+        fs::write(dir.join("tool.stderr"), b"err").expect("stderr");
+        fs::write(dir.join("tool.exit"), "4").expect("exit");
+        let log_path = call_log_path(&dir, "tool");
+        fs::create_dir_all(log_path.parent().expect("log parent")).expect("calls dir");
+        fs::write(&log_path, "").expect("empty log");
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = run_with(&exe, &["/all".to_owned()], &mut stdout, &mut stderr);
+        assert_eq!(code, 4);
+        assert_eq!(stdout, b"out");
+        assert_eq!(stderr, b"err");
+        let log = fs::read_to_string(&log_path).expect("read log");
+        assert_eq!(log.lines().collect::<Vec<_>>(), ["/all"]);
+
+        let mut empty_out = Vec::new();
+        let mut empty_err = Vec::new();
+        let skipped = run_with(
+            &dir.join("other.exe"),
+            &["x".to_owned()],
+            &mut empty_out,
+            &mut empty_err,
+        );
+        assert_eq!(skipped, 0);
+        assert!(empty_out.is_empty());
+        assert!(!call_log_path(&dir, "other").exists());
+
+        fs::create_dir_all(dir.join("broken.stdout")).expect("stdout dir");
+        fs::create_dir_all(call_log_path(&dir, "broken")).expect("log path is dir");
+        let mut ignored_out = Vec::new();
+        let mut ignored_err = Vec::new();
+        let ignored = run_with(
+            &dir.join("broken.exe"),
+            &["y".to_owned()],
+            &mut ignored_out,
+            &mut ignored_err,
+        );
+        assert_eq!(ignored, 0);
+        remove_temp_dir(&dir);
+    }
+
+    #[test]
+    fn run_executes_against_the_test_process() {
+        let _ = super::run();
     }
 }

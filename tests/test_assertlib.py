@@ -15,6 +15,7 @@ from battest.assertlib import (
     match_files,
     match_mock_calls,
     match_output,
+    newline_requirement_failure,
     unified_diff_text,
 )
 from battest.models import (
@@ -35,6 +36,52 @@ def test_newline_auto_normalizes() -> None:
     assert apply_newline_mode("a\r\nb\r\n", NewlineMode.LF) == "a\nb\n"
     with pytest.raises(ValueError, match="unhandled newline mode"):
         apply_newline_mode("x", cast(NewlineMode, object()))
+    with pytest.raises(ValueError, match="unhandled newline mode"):
+        newline_requirement_failure("x", cast(NewlineMode, object()))
+
+
+def test_crlf_mode_requires_crlf_and_accepts_lf_expected() -> None:
+    assert newline_requirement_failure("hello\n", NewlineMode.CRLF) is not None
+    assert newline_requirement_failure("hello\r\n", NewlineMode.CRLF) is None
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals="hello\n", newline=NewlineMode.CRLF),
+        "hello\r\n",
+        Path("."),
+        200,
+    )
+    assert failures == []
+    lone_lf = match_output(
+        "stdout",
+        OutputMatcher(equals="hello\n", newline=NewlineMode.CRLF),
+        "hello\n",
+        Path("."),
+        200,
+    )
+    assert lone_lf
+    assert "lone LF" in lone_lf[0].message
+
+
+def test_lf_mode_rejects_cr() -> None:
+    assert newline_requirement_failure("hello\r\n", NewlineMode.LF) is not None
+    assert newline_requirement_failure("hello\n", NewlineMode.LF) is None
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals="hello\n", newline=NewlineMode.LF),
+        "hello\n",
+        Path("."),
+        200,
+    )
+    assert failures == []
+    crlf_actual = match_output(
+        "stdout",
+        OutputMatcher(equals="hello\n", newline=NewlineMode.LF),
+        "hello\r\n",
+        Path("."),
+        200,
+    )
+    assert crlf_actual
+    assert "CR bytes" in crlf_actual[0].message
 
 
 @pytest.mark.parametrize(
@@ -125,10 +172,52 @@ def test_match_output_empty_false() -> None:
 def test_match_output_regex_and_equals_file(tmp_path: Path) -> None:
     expected = tmp_path / "out.txt"
     expected.write_text("abc\n", encoding="utf-8")
-    matcher = OutputMatcher(equals_file=str(expected), regex="a.c")
+    matcher = OutputMatcher(equals_file="out.txt", regex="a.c")
     assert match_output("stdout", matcher, "abc\n", tmp_path, 200) == []
     failed = match_output("stdout", matcher, "zzz\n", tmp_path, 200)
     assert len(failed) >= 1
+
+
+def test_match_output_equals_file_rejects_escape(tmp_path: Path) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("classified\n", encoding="utf-8")
+    source = tmp_path / "src"
+    source.mkdir()
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals_file="../secret.txt"),
+        "classified\n",
+        source,
+        200,
+    )
+    assert failures
+    assert "escapes" in failures[0].message
+
+
+def test_match_output_equals_file_rejects_absolute(tmp_path: Path) -> None:
+    golden = tmp_path / "expected.txt"
+    golden.write_text("abc\n", encoding="utf-8")
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals_file=str(golden)),
+        "abc\n",
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "escapes" in failures[0].message
+
+
+def test_invalid_regex_is_rejected_at_model() -> None:
+    with pytest.raises(ValueError, match="invalid regex"):
+        OutputMatcher(regex="(")
+
+
+def test_match_output_invalid_regex_is_failure() -> None:
+    matcher = OutputMatcher.model_construct(regex="(")
+    failures = match_output("stdout", matcher, "abc", Path("."), 200)
+    assert failures
+    assert "invalid regex" in failures[0].message
 
 
 def test_match_output_equals_file_missing_is_failure(tmp_path: Path) -> None:
@@ -276,7 +365,8 @@ def test_match_files_read_oserror(
         200,
     )
     assert failures
-    assert "file not found" in failures[0].message
+    assert "failed to read" in failures[0].message
+    assert "denied" in failures[0].message
 
 
 def test_match_mock_calls() -> None:
@@ -288,8 +378,8 @@ def test_match_mock_calls() -> None:
     unused = {"net": MockSpec(expect_calls=[CallExpectation(not_called=True)])}
     assert match_mock_calls(unused, {"net": []}) == []
     assert match_mock_calls(unused, {"net": ["session"]})
-    unconstrained = {"net": MockSpec(expect_calls=[CallExpectation()])}
-    assert match_mock_calls(unconstrained, {"net": ["anything"]}) == []
+    with pytest.raises(ValueError, match="args_contains or not_called"):
+        CallExpectation()
 
 
 def test_match_mock_calls_whitespace_only_line_counts_as_call() -> None:
@@ -317,3 +407,8 @@ def test_evaluate_case_pass(tmp_path: Path) -> None:
     )
     failures = evaluate_case(case, 0, "ok\n", "", {}, tmp_path, {}, 200)
     assert failures == []
+    failed = evaluate_case(case, 1, "nope\n", "err", {}, tmp_path, {}, 200)
+    assert len(failed) >= 2
+    kinds = {item.kind for item in failed}
+    assert "exit_code" in kinds
+    assert "stdout" in kinds

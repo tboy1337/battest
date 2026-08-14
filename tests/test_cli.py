@@ -172,6 +172,28 @@ def test_main_rejects_jobs_less_than_one(
     assert called["execute"] is False
 
 
+def test_main_rejects_max_diff_less_than_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    (tmp_path / "ok.battest.yaml").write_text(
+        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+    called = {"execute": False}
+
+    def fake_execute(_cases: list[Case], _config: EngineConfig) -> list[RunResult]:
+        called["execute"] = True
+        return []
+
+    monkeypatch.setattr("battest.cli.execute_cases", fake_execute)
+    assert main(["run", str(tmp_path), "--max-diff", "0"]) == 2
+    assert main(["run", str(tmp_path), "--max-diff", "-4"]) == 2
+    assert called["execute"] is False
+
+
 def test_main_execute_engine_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -188,6 +210,9 @@ def test_main_execute_engine_error(
 
     monkeypatch.setattr("battest.cli.execute_cases", boom)
     assert main(["run", str(tmp_path), "--verbose", "--include-spec-exec"]) == 2
+
+
+def test_load_case_file_and_dir(tmp_path: Path) -> None:
     script = tmp_path / "input.cmd"
     script.write_text("@echo off\n", encoding="utf-8")
     manifest = tmp_path / "ok.battest.yaml"
@@ -234,3 +259,4 @@ def test_root_action_yml_is_composite() -> None:
     assert "${{ inputs.safe-defaults }}" not in run_source
     assert "BATTEST_PATH" in run_source
     assert "python @cmdArgs" in run_source
+    assert "ConvertFrom-Json" in run_source

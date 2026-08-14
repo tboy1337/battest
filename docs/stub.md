@@ -9,26 +9,29 @@ prebuilt PE at `src/battest/data/battest_stub.exe`.
 ```text
 stub/Cargo.toml
 stub/src/lib.rs      # sidecar, exit code, call-log logic
-stub/src/main.rs     # thin binary
+stub/src/main.rs     # thin binary; logs argv only if `_calls/<stem>.log` exists
 stub/tests/cli.rs    # runs the compiled stub like PATH mocks do
 ```
 
 ## Commands
 
-From the repository root (Rust stable with `rustfmt` and `clippy`):
+From the repository root (Rust stable with `rustfmt`, `clippy`, and
+`llvm-tools-preview`, plus `cargo-llvm-cov`):
 
 ```text
 cargo fmt --all --check --manifest-path stub/Cargo.toml
+cargo check --manifest-path stub/Cargo.toml --all-targets --locked
 cargo clippy --manifest-path stub/Cargo.toml --all-targets --locked -- -D warnings
 cargo test --manifest-path stub/Cargo.toml --locked --all-targets
 cargo audit --file stub/Cargo.lock
+python scripts/check_rust_coverage.py
 ```
 
-Coverage (CI uses the same flags):
-
-```text
-cargo llvm-cov --manifest-path stub/Cargo.toml --locked --all-targets --fail-under-lines 90 --fail-under-branches 90
-```
+`check_rust_coverage.py` runs `cargo llvm-cov` and fails unless line, branch,
+function, and region coverage are each at least 90% overall and per file under
+`stub/src`. LLVM branch counters need nightly; on stable the gate uses region
+coverage as the branch metric. Install the collector with
+`cargo install cargo-llvm-cov`.
 
 Rebuild the packaged Windows stub after changing the crate (Windows only copies
 the PE into package data):
@@ -37,5 +40,5 @@ the PE into package data):
 python scripts/build_stub.py
 ```
 
-`python scripts/verify.py` runs the format, clippy, and test commands above
-alongside the Python checks.
+`python scripts/verify.py` runs the format, type-check, clippy, test, and
+coverage commands above alongside the Python checks.

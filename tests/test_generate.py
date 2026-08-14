@@ -165,3 +165,222 @@ def test_coverage_gate_skips_module_regions_and_empty_bodies() -> None:
     percents = module.percents_for_summary(report.totals, demo.functions, demo.classes)
     assert percents.function == pytest.approx(200.0 / 3.0)
     assert percents.class_ == 100.0
+
+
+def _llvm_count(covered: int, total: int) -> dict[str, object]:
+    percent = 0.0 if total == 0 else 100.0 * covered / total
+    return {
+        "count": total,
+        "covered": covered,
+        "percent": percent,
+        "notcovered": max(total - covered, 0),
+    }
+
+
+def _llvm_summary(
+    *,
+    lines: tuple[int, int] = (9, 10),
+    functions: tuple[int, int] = (9, 10),
+    regions: tuple[int, int] = (9, 10),
+    branches: tuple[int, int] = (0, 0),
+) -> dict[str, object]:
+    return {
+        "lines": _llvm_count(*lines),
+        "functions": _llvm_count(*functions),
+        "regions": _llvm_count(*regions),
+        "branches": _llvm_count(*branches),
+    }
+
+
+def _llvm_json(
+    *,
+    filename: str | None = None,
+    summary: dict[str, object] | None = None,
+    extra_files: list[dict[str, object]] | None = None,
+    totals: dict[str, object] | None = None,
+) -> dict[str, object]:
+    source = (
+        filename
+        if filename is not None
+        else str(Path("repo") / "stub" / "src" / "lib.rs")
+    )
+    file_summary = summary if summary is not None else _llvm_summary()
+    files = [{"filename": source, "summary": file_summary}]
+    if extra_files:
+        files.extend(extra_files)
+    return {
+        "data": [
+            {
+                "files": files,
+                "totals": totals if totals is not None else file_summary,
+            }
+        ]
+    }
+
+
+def test_rust_coverage_gate_helpers() -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+    assert module.ratio_percent(9, 10) == 90.0
+    assert module.ratio_percent(0, 0) == 100.0
+    assert module.is_stub_source(str(Path("repo") / "stub" / "src" / "lib.rs")) is True
+    assert (
+        module.is_stub_source(str(Path("repo") / "stub" / "tests" / "cli.rs")) is False
+    )
+    assert module.is_stub_source(str(Path("other") / "src" / "lib.rs")) is False
+    passing = module.MetricPercents(line=91.0, branch=90.0, function=95.0, region=92.0)
+    assert module.failures(passing, {"lib.rs": passing}) == []
+    failing = module.MetricPercents(line=89.0, branch=90.0, function=95.0, region=92.0)
+    assert module.failures(failing, {}) == ["line"]
+    file_fail = module.MetricPercents(
+        line=100.0, branch=100.0, function=80.0, region=100.0
+    )
+    overall_ok = module.MetricPercents(
+        line=100.0, branch=100.0, function=100.0, region=100.0
+    )
+    assert module.failures(overall_ok, {"lib.rs": file_fail}) == ["lib.rs:function"]
+    command = module.llvm_cov_command("cargo", Path("out.json"))
+    assert "--fail-under-lines" in command
+    assert "--fail-under-functions" in command
+    assert "--fail-under-regions" in command
+    assert "--fail-under-file-lines" in command
+
+
+def test_rust_coverage_measure_uses_regions_as_branch_when_empty(
+    tmp_path: Path,
+) -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+    report = tmp_path / "cov.json"
+    report.write_text(json.dumps(_llvm_json()), encoding="utf-8")
+    overall, files = module.measure(report)
+    assert overall.line == 90.0
+    assert overall.function == 90.0
+    assert overall.region == 90.0
+    assert overall.branch == 90.0
+    assert files
+    assert module.main(["--skip-collect", "--json", str(report)]) == 0
+
+
+def test_rust_coverage_measure_uses_real_branch_counters(tmp_path: Path) -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+    summary = _llvm_summary(branches=(8, 10), regions=(10, 10))
+    report = tmp_path / "cov.json"
+    report.write_text(
+        json.dumps(_llvm_json(summary=summary, totals=summary)), encoding="utf-8"
+    )
+    overall, _files = module.measure(report)
+    assert overall.branch == 80.0
+    assert overall.region == 100.0
+    assert module.main(["--skip-collect", "--json", str(report)]) == 1
+
+
+def test_rust_coverage_gate_errors(tmp_path: Path) -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+    missing = tmp_path / "missing.json"
+    assert module.main(["--skip-collect", "--json", str(missing)]) == 2
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{not-json", encoding="utf-8")
+    assert module.main(["--skip-collect", "--json", str(invalid)]) == 2
+    empty = tmp_path / "empty.json"
+    empty.write_bytes(b"\xff")
+    assert module.main(["--skip-collect", "--json", str(empty)]) == 2
+    no_data = tmp_path / "nodata.json"
+    no_data.write_text(json.dumps({"data": []}), encoding="utf-8")
+    assert module.main(["--skip-collect", "--json", str(no_data)]) == 2
+    skipped = tmp_path / "vendor.json"
+    skipped.write_text(
+        json.dumps(
+            _llvm_json(
+                filename=str(Path("vendor") / "other.rs"),
+                summary=_llvm_summary(lines=(1, 10)),
+                totals=_llvm_summary(),
+            )
+        ),
+        encoding="utf-8",
+    )
+    overall, files = module.measure(skipped)
+    assert files == {}
+    assert overall.line == 90.0
+
+
+def test_rust_coverage_collect_report_requires_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+    output = tmp_path / "out.json"
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: None)
+    assert module.collect_report(output) == 2
+
+    def which_cargo_only(name: str) -> str | None:
+        if name == "cargo":
+            return "cargo"
+        return None
+
+    monkeypatch.setattr(module.shutil, "which", which_cargo_only)
+    assert module.collect_report(output) == 2
+
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "tool")
+    monkeypatch.setattr(module, "STUB_MANIFEST", tmp_path / "missing.toml")
+    assert module.collect_report(output) == 2
+
+
+def test_rust_coverage_collect_report_runs_llvm_cov(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+    output = tmp_path / "nested" / "out.json"
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "tool")
+    monkeypatch.setattr(module, "STUB_MANIFEST", tmp_path / "Cargo.toml")
+    (tmp_path / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], cwd: Path, check: bool) -> object:
+        seen.append(command)
+
+        class Completed:
+            returncode = 0
+
+        assert cwd == module.REPO_ROOT
+        assert check is False
+        return Completed()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    assert module.collect_report(output) == 0
+    assert seen
+    assert str(output) in seen[0]
+    assert output.parent.is_dir()
+
+    def boom(command: list[str], cwd: Path, check: bool) -> object:
+        class Completed:
+            returncode = 9
+
+        return Completed()
+
+    monkeypatch.setattr(module.subprocess, "run", boom)
+    assert module.collect_report(output) == 9
+
+
+def test_rust_coverage_main_collect_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+
+    def fail_collect(_output: Path) -> int:
+        return 3
+
+    monkeypatch.setattr(module, "collect_report", fail_collect)
+    assert module.main(["--json", str(tmp_path / "out.json")]) == 3
+
+
+def test_rust_coverage_measure_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_script("check_rust_coverage.py", "check_rust_coverage")
+    report = tmp_path / "cov.json"
+    report.write_text(json.dumps(_llvm_json()), encoding="utf-8")
+
+    def boom(_path: Path) -> tuple[object, dict[str, object]]:
+        raise OSError("denied")
+
+    monkeypatch.setattr(module, "measure", boom)
+    assert module.main(["--skip-collect", "--json", str(report)]) == 2

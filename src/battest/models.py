@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -38,6 +39,18 @@ class OutputMatcher(BaseModel):
     empty: bool | None = None
     newline: NewlineMode = NewlineMode.AUTO
 
+    @field_validator("regex")
+    @classmethod
+    def regex_must_compile(cls, value: str | None) -> str | None:
+        """Reject patterns that cannot be compiled."""
+        if value is None:
+            return None
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"invalid regex: {exc}") from exc
+        return value
+
     def has_constraint(self) -> bool:
         """Return True when at least one comparison is configured."""
         return any(
@@ -57,7 +70,7 @@ class FileMatcher(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    path: str
+    path: str = Field(min_length=1)
     exists: bool | None = None
     not_exists: bool | None = None
     contains: str | None = None
@@ -79,6 +92,13 @@ class CallExpectation(BaseModel):
 
     args_contains: str | None = None
     not_called: bool | None = None
+
+    @model_validator(mode="after")
+    def require_constraint(self) -> CallExpectation:
+        """Require args_contains or not_called so empty expectations cannot pass."""
+        if self.args_contains is None and self.not_called is None:
+            raise ValueError("call expectation must set args_contains or not_called")
+        return self
 
 
 class MockSpec(BaseModel):
@@ -148,6 +168,25 @@ class ParamOverlay(BaseModel):
     timeout_seconds: float | None = Field(default=None, gt=0)
     allow: list[str] | None = None
 
+    @field_validator("id")
+    @classmethod
+    def id_not_empty(cls, value: str) -> str:
+        """Require a non-empty overlay id."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("param id must not be empty")
+        return stripped
+
+    @field_validator("mocks")
+    @classmethod
+    def lowercase_overlay_mock_keys(
+        cls, value: dict[str, MockSpec] | None
+    ) -> dict[str, MockSpec] | None:
+        """Normalize overlay mock command names to lowercase."""
+        if value is None:
+            return None
+        return {name.lower(): spec for name, spec in value.items()}
+
 
 class CaseDocument(BaseModel):
     """Raw YAML document before path resolution and param expansion."""
@@ -176,6 +215,12 @@ class CaseDocument(BaseModel):
         if not stripped:
             raise ValueError("description must not be empty")
         return stripped
+
+    @field_validator("mocks")
+    @classmethod
+    def lowercase_mock_keys(cls, value: dict[str, MockSpec]) -> dict[str, MockSpec]:
+        """Normalize mock command names to lowercase."""
+        return {name.lower(): spec for name, spec in value.items()}
 
 
 class Case(BaseModel):
@@ -237,7 +282,7 @@ class EngineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     safe_defaults: bool = False
-    max_diff: int = 2000
+    max_diff: int = Field(default=2000, ge=1)
     jobs: int = Field(default=1, ge=1)
     default_timeout_seconds: float = Field(default=30.0, gt=0)
 
@@ -259,7 +304,8 @@ def merge_mocks(
     overlay: dict[str, MockSpec] | None,
 ) -> dict[str, MockSpec]:
     """Return base mocks with overlay keys replacing matching command names."""
-    merged = dict(base)
+    merged = {name.lower(): spec for name, spec in base.items()}
     if overlay:
-        merged.update(overlay)
+        for name, spec in overlay.items():
+            merged[name.lower()] = spec
     return merged

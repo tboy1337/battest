@@ -231,16 +231,31 @@ def test_kill_process_tree_invokes_taskkill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[list[str]] = []
+    timeouts: list[object] = []
 
     def fake_run(
-        command: list[str], **_kwargs: object
+        command: list[str], **kwargs: object
     ) -> subprocess.CompletedProcess[str]:
         seen.append(command)
+        timeouts.append(kwargs.get("timeout"))
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     kill_process_tree(1234)
     assert seen[0][:3] == ["taskkill", "/F", "/T"]
+    assert timeouts[0] is not None
+
+
+def test_kill_process_tree_timeout_is_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def fake_run(*_args: object, **_kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(cmd="taskkill", timeout=1)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with caplog.at_level("ERROR", logger="battest.engine"):
+        kill_process_tree(99)
+    assert "taskkill timed out" in caplog.text
 
 
 def _write_case(tmp_path: Path, body: str, yaml_body: str, name: str = "run") -> Case:
@@ -340,6 +355,89 @@ def test_engine_file_and_stderr(tmp_path: Path) -> None:
     )
     result = execute_case(case, EngineConfig())
     assert result.outcome == Outcome.PASS, result.failures
+
+
+@pytest.mark.windows
+def test_engine_asserts_before_teardown_deletes_files(tmp_path: Path) -> None:
+    (tmp_path / "setup.cmd").write_text(
+        "@echo off\r\necho setup-ran>setup.txt\r\nexit /b 0\r\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "teardown.cmd").write_text(
+        "@echo off\r\ndel setup.txt\r\nexit /b 0\r\n",
+        encoding="utf-8",
+    )
+    case = _write_case(
+        tmp_path,
+        "@echo off\r\nexit /b 0\r\n",
+        "\n".join(
+            [
+                "description: teardown deletes asserted file",
+                "script: run.cmd",
+                "setup: setup.cmd",
+                "teardown: teardown.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "  files:",
+                "    - path: setup.txt",
+                "      exists: true",
+                "      contains: setup-ran",
+            ]
+        ),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.PASS, result.failures
+
+
+@pytest.mark.windows
+def test_engine_setup_failure_still_runs_teardown(tmp_path: Path) -> None:
+    (tmp_path / "setup.cmd").write_text("@echo off\r\nexit /b 9\r\n", encoding="utf-8")
+    (tmp_path / "teardown.cmd").write_text(
+        "@echo off\r\necho torn-down>torn.txt\r\nexit /b 0\r\n",
+        encoding="utf-8",
+    )
+    case = _write_case(
+        tmp_path,
+        "@echo off\r\nexit /b 0\r\n",
+        "\n".join(
+            [
+                "description: setup fail still tears down",
+                "script: run.cmd",
+                "setup: setup.cmd",
+                "teardown: teardown.cmd",
+                "expect:",
+                "  exit_code: 0",
+            ]
+        ),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "setup failed" in result.error_message
+
+
+@pytest.mark.windows
+def test_engine_teardown_failure_errors_passing_case(tmp_path: Path) -> None:
+    (tmp_path / "teardown.cmd").write_text(
+        "@echo off\r\nexit /b 4\r\n", encoding="utf-8"
+    )
+    case = _write_case(
+        tmp_path,
+        "@echo off\r\nexit /b 0\r\n",
+        "\n".join(
+            [
+                "description: teardown fails",
+                "script: run.cmd",
+                "teardown: teardown.cmd",
+                "expect:",
+                "  exit_code: 0",
+            ]
+        ),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "teardown failed" in result.error_message
 
 
 @pytest.mark.windows
@@ -538,12 +636,12 @@ def test_execute_cases_worker_error(
     script.write_text("@echo off\n", encoding="utf-8")
     first = Case(
         case_id="a",
-        description="a",
+        description="alpha",
         source_path=tmp_path / "expect.yaml",
         script_path=script,
         expect=Expect(exit_code=0),
     )
-    second = first.model_copy(update={"case_id": "b", "description": "b"})
+    second = first.model_copy(update={"case_id": "b", "description": "beta"})
 
     def boom(_case: Case, _config: EngineConfig) -> RunResult:
         raise RuntimeError("boom")
@@ -551,6 +649,8 @@ def test_execute_cases_worker_error(
     monkeypatch.setattr("battest.engine.execute_case", boom)
     results = execute_cases([first, second], EngineConfig(jobs=2))
     assert [item.outcome for item in results] == [Outcome.ERROR, Outcome.ERROR]
+    assert [item.description for item in results] == ["alpha", "beta"]
+    assert results[0].error_message == "boom"
 
 
 def test_execute_case_requires_windows(
@@ -655,8 +755,48 @@ def test_teardown_oserror_is_logged(
     monkeypatch.setattr("battest.engine._run_process", fake_run)
     with caplog.at_level("ERROR", logger="battest.engine"):
         result = execute_case(case, EngineConfig())
-    assert result.outcome == Outcome.PASS
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "teardown boom" in result.error_message
     assert "teardown boom" in caplog.text
+
+
+def test_teardown_failure_keeps_fail_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    teardown = tmp_path / "teardown.cmd"
+    teardown.write_text("@echo off\n", encoding="utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        teardown_path=teardown,
+        expect=Expect(exit_code=0),
+    )
+    calls = {"n": 0}
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> tuple[int, str, str, bool]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 1, "", "", False
+        return 4, "", "teardown-err", False
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.FAIL
+    assert any("teardown failed" in item for item in result.warnings)
 
 
 def test_run_process_success_and_timeout(
@@ -722,6 +862,37 @@ def test_run_process_success_and_timeout(
     assert killed == []
 
 
+def test_run_process_warns_when_stdin_cannot_encode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class OkProcess:
+        pid = 1
+        returncode = 0
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> OkProcess:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def communicate(
+            self, input: bytes | None = None, timeout: float | None = None
+        ) -> tuple[bytes, bytes]:
+            assert input is not None
+            assert b"?" in input
+            return b"", b""
+
+    monkeypatch.setattr("battest.engine.subprocess.Popen", OkProcess)
+    with caplog.at_level("WARNING", logger="battest.engine"):
+        _run_process(["cmd"], tmp_path, {}, "café", 1.0, "ascii")
+    assert "cannot be encoded" in caplog.text
+
+
 def test_execute_case_setup_timeout_and_env_dump(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -764,6 +935,7 @@ def test_execute_case_setup_timeout_and_env_dump(
     assert failed.outcome == Outcome.ERROR
     assert failed.error_message is not None
     assert "setup failed" in failed.error_message
+    assert calls["n"] == 2
 
     def succeed_with_dump(
         _command: list[str],

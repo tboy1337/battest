@@ -7,7 +7,7 @@ inputs:
     required: false
     default: ""
   extra-args:
-    description: Extra arguments forwarded to battest run
+    description: Extra battest run arguments. JSON string array or space-separated tokens
     required: false
     default: ""
   safe-defaults:
@@ -33,7 +33,7 @@ runs:
         }
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -59,7 +59,14 @@ runs:
         $junit = Join-Path $env:RUNNER_TEMP "battest-junit.xml"
         $cmdArgs = @("-m", "battest", "run", $safe, "--junit-xml", $junit)
         if ($target) { $cmdArgs += $target }
-        if ($extra) { $cmdArgs += $extra.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries) }
+        if ($extra) {
+          if ($extra.StartsWith("[")) {
+            $parsed = ConvertFrom-Json -InputObject $extra
+            foreach ($item in @($parsed)) { $cmdArgs += [string]$item }
+          } else {
+            $cmdArgs += $extra.Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
+          }
+        }
         Write-Host ("Running: python " + ($cmdArgs -join " "))
         python @cmdArgs
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

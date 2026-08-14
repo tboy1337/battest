@@ -101,6 +101,11 @@ def _run_command(args: argparse.Namespace) -> int:
         LOGGER.error("%s", message)
         print(message, file=sys.stderr)
         return 2
+    if args.max_diff < 1:
+        message = "--max-diff must be at least 1"
+        LOGGER.error("%s", message)
+        print(message, file=sys.stderr)
+        return 2
     try:
         cases = discover_cases(root, include_spec_exec=args.include_spec_exec)
     except SchemaError as exc:

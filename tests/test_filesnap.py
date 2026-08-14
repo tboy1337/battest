@@ -25,6 +25,14 @@ def test_file_text_missing(tmp_path: Path) -> None:
     assert file_text(tmp_path, "yes.txt") == "abc"
 
 
+def test_file_text_rejects_escape(tmp_path: Path) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("classified", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    assert file_text(work, "../secret.txt") is None
+
+
 def test_file_text_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "yes.txt"
     target.write_text("abc", encoding="utf-8")

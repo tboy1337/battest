@@ -80,12 +80,16 @@ def build_cmd_line(wrapper: Path, args: list[str]) -> list[str]:
 def kill_process_tree(pid: int) -> None:
     """Kill a process and its descendants on Windows."""
     LOGGER.warning("killing process tree pid=%s", pid)
-    subprocess.run(
-        ["taskkill", "/F", "/T", "/PID", str(pid)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=KILL_DRAIN_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        LOGGER.error("taskkill timed out for pid=%s", pid)
 
 
 def drain_after_timeout(
@@ -126,7 +130,7 @@ def _run_process(
     encoding: str,
 ) -> tuple[int, str, str, bool]:
     LOGGER.info("exec command=%s cwd=%s timeout=%s", command, cwd, timeout_seconds)
-    stdin_bytes = stdin_text.encode(encoding, errors="replace") if stdin_text else None
+    stdin_bytes = _encode_stdin(stdin_text, encoding)
     creationflags = CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
     timed_out = False
     stdout_bytes = b""
@@ -210,8 +214,168 @@ def resolved_timeout(case: Case, config: EngineConfig) -> float:
     return config.default_timeout_seconds
 
 
+def _encode_stdin(stdin_text: str, encoding: str) -> bytes | None:
+    if not stdin_text:
+        return None
+    try:
+        return stdin_text.encode(encoding)
+    except UnicodeEncodeError:
+        LOGGER.warning(
+            "stdin contains characters that cannot be encoded as %s; replacing",
+            encoding,
+        )
+        return stdin_text.encode(encoding, errors="replace")
+
+
+def _snapshot_env(work_dir: Path, encoding: str) -> dict[str, str]:
+    env_dump = work_dir / ENV_DUMP_NAME
+    if not env_dump.is_file():
+        return {}
+    return filter_helper_vars(
+        parse_set_output(env_dump.read_text(encoding=encoding, errors="replace"))
+    )
+
+
+def _run_setup(
+    case: Case,
+    work_dir: Path,
+    env: dict[str, str],
+    timeout: float,
+    encoding: str,
+) -> str | None:
+    if case.setup_path is None:
+        return None
+    setup_exit, _, setup_err, setup_timeout = _run_process(
+        build_cmd_line(case.setup_path, []),
+        work_dir,
+        env,
+        "",
+        timeout,
+        encoding,
+    )
+    if setup_timeout or setup_exit != 0:
+        message = (
+            f"setup failed exit={setup_exit} timeout={setup_timeout} "
+            f"stderr={setup_err.strip()}"
+        )
+        LOGGER.error("%s", message)
+        return message
+    return None
+
+
+def _run_teardown(
+    case: Case,
+    work_dir: Path,
+    env: dict[str, str],
+    timeout: float,
+    encoding: str,
+) -> str | None:
+    if case.teardown_path is None:
+        return None
+    try:
+        exit_code, _, stderr, timed_out = _run_process(
+            build_cmd_line(case.teardown_path, []),
+            work_dir,
+            env,
+            "",
+            timeout,
+            encoding,
+        )
+    except OSError as exc:
+        LOGGER.error("teardown failed for %s: %s", case.case_id, exc)
+        return f"teardown failed: {exc}"
+    if timed_out or exit_code != 0:
+        message = (
+            f"teardown failed exit={exit_code} timeout={timed_out} "
+            f"stderr={stderr.strip()}"
+        )
+        LOGGER.error("%s", message)
+        return message
+    return None
+
+
+def _apply_teardown_result(result: RunResult, teardown_error: str | None) -> RunResult:
+    if teardown_error is None:
+        return result
+    warnings = list(result.warnings) + [teardown_error]
+    outcome = Outcome.ERROR if result.outcome == Outcome.PASS else result.outcome
+    error_message = (
+        teardown_error if result.outcome == Outcome.PASS else result.error_message
+    )
+    return RunResult(
+        case_id=result.case_id,
+        description=result.description,
+        outcome=outcome,
+        exit_code=result.exit_code,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        env=result.env,
+        mock_calls=result.mock_calls,
+        failures=result.failures,
+        duration_seconds=result.duration_seconds,
+        error_message=error_message,
+        warnings=warnings,
+    )
+
+
+def _evaluate_after_run(
+    case: Case,
+    config: EngineConfig,
+    work_dir: Path,
+    mock_dir: Path | None,
+    encoding: str,
+    timeout: float,
+    warnings: list[str],
+    duration: float,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    timed_out: bool,
+) -> RunResult:
+    captured_env = _snapshot_env(work_dir, encoding)
+    mock_calls = read_call_logs(mock_dir) if mock_dir is not None else {}
+    if timed_out:
+        return RunResult(
+            case_id=case.case_id,
+            description=case.description,
+            outcome=Outcome.TIMEOUT,
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            env=captured_env,
+            mock_calls=mock_calls,
+            duration_seconds=duration,
+            error_message=f"timed out after {timeout}s",
+            warnings=warnings,
+        )
+    failures = evaluate_case(
+        case,
+        exit_code,
+        stdout,
+        stderr,
+        captured_env,
+        work_dir,
+        mock_calls,
+        config.max_diff,
+    )
+    outcome = Outcome.FAIL if failures else Outcome.PASS
+    return RunResult(
+        case_id=case.case_id,
+        description=case.description,
+        outcome=outcome,
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
+        env=captured_env,
+        mock_calls=mock_calls,
+        failures=failures,
+        duration_seconds=duration,
+        warnings=warnings,
+    )
+
+
 def execute_case(case: Case, config: EngineConfig) -> RunResult:
-    """Run one case under cmd.exe, then evaluate assertions."""
+    """Run one case under cmd.exe, then evaluate assertions, then teardown."""
     require_windows()
     started = time.perf_counter()
     warnings = _script_warnings(case)
@@ -232,92 +396,39 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
         wrapper = work_dir / WRAPPER_NAME
         wrapper.write_text(_WRAPPER_TEMPLATE, encoding="utf-8")
         env = _combined_env(case, work_dir, mock_dir)
-        if case.setup_path is not None:
-            setup_cmd = build_cmd_line(case.setup_path, [])
-            setup_exit, _, setup_err, setup_timeout = _run_process(
-                setup_cmd, work_dir, env, "", timeout, encoding
-            )
-            if setup_timeout or setup_exit != 0:
-                duration = time.perf_counter() - started
-                message = (
-                    f"setup failed exit={setup_exit} timeout={setup_timeout} "
-                    f"stderr={setup_err.strip()}"
-                )
-                LOGGER.error("%s", message)
-                return RunResult(
-                    case_id=case.case_id,
-                    description=case.description,
-                    outcome=Outcome.ERROR,
-                    error_message=message,
-                    duration_seconds=duration,
-                    warnings=warnings,
-                )
-        command = build_cmd_line(wrapper, case.args)
-        try:
+        setup_error = _run_setup(case, work_dir, env, timeout, encoding)
+        if setup_error is None:
+            command = build_cmd_line(wrapper, case.args)
             exit_code, stdout, stderr, timed_out = _run_process(
                 command, work_dir, env, case.stdin, timeout, encoding
             )
-        finally:
-            if case.teardown_path is not None:
-                try:
-                    _run_process(
-                        build_cmd_line(case.teardown_path, []),
-                        work_dir,
-                        env,
-                        "",
-                        timeout,
-                        encoding,
-                    )
-                except OSError as exc:
-                    LOGGER.error("teardown failed for %s: %s", case.case_id, exc)
-        env_dump = work_dir / ENV_DUMP_NAME
-        captured_env: dict[str, str] = {}
-        if env_dump.is_file():
-            captured_env = filter_helper_vars(
-                parse_set_output(
-                    env_dump.read_text(encoding=encoding, errors="replace")
-                )
+            duration = time.perf_counter() - started
+            result = _evaluate_after_run(
+                case,
+                config,
+                work_dir,
+                mock_dir,
+                encoding,
+                timeout,
+                warnings,
+                duration,
+                exit_code,
+                stdout,
+                stderr,
+                timed_out,
             )
-        mock_calls = read_call_logs(mock_dir) if mock_dir is not None else {}
-        duration = time.perf_counter() - started
-        if timed_out:
-            return RunResult(
+        else:
+            duration = time.perf_counter() - started
+            result = RunResult(
                 case_id=case.case_id,
                 description=case.description,
-                outcome=Outcome.TIMEOUT,
-                exit_code=exit_code,
-                stdout=stdout,
-                stderr=stderr,
-                env=captured_env,
-                mock_calls=mock_calls,
+                outcome=Outcome.ERROR,
+                error_message=setup_error,
                 duration_seconds=duration,
-                error_message=f"timed out after {timeout}s",
                 warnings=warnings,
             )
-        failures = evaluate_case(
-            case,
-            exit_code,
-            stdout,
-            stderr,
-            captured_env,
-            work_dir,
-            mock_calls,
-            config.max_diff,
-        )
-        outcome = Outcome.FAIL if failures else Outcome.PASS
-        return RunResult(
-            case_id=case.case_id,
-            description=case.description,
-            outcome=outcome,
-            exit_code=exit_code,
-            stdout=stdout,
-            stderr=stderr,
-            env=captured_env,
-            mock_calls=mock_calls,
-            failures=failures,
-            duration_seconds=duration,
-            warnings=warnings,
-        )
+        teardown_error = _run_teardown(case, work_dir, env, timeout, encoding)
+        return _apply_teardown_result(result, teardown_error)
 
 
 def execute_cases(cases: list[Case], config: EngineConfig) -> list[RunResult]:
@@ -327,18 +438,16 @@ def execute_cases(cases: list[Case], config: EngineConfig) -> list[RunResult]:
         return [execute_case(case, config) for case in cases]
     results_by_id: dict[str, RunResult] = {}
     with ThreadPoolExecutor(max_workers=config.jobs) as pool:
-        future_map = {
-            pool.submit(execute_case, case, config): case.case_id for case in cases
-        }
+        future_map = {pool.submit(execute_case, case, config): case for case in cases}
         for future in as_completed(future_map):
-            case_id = future_map[future]
+            case = future_map[future]
             try:
-                results_by_id[case_id] = future.result()
+                results_by_id[case.case_id] = future.result()
             except Exception as exc:
-                LOGGER.error("case %s raised %s", case_id, exc)
-                results_by_id[case_id] = RunResult(
-                    case_id=case_id,
-                    description=case_id,
+                LOGGER.error("case %s raised %s", case.case_id, exc, exc_info=True)
+                results_by_id[case.case_id] = RunResult(
+                    case_id=case.case_id,
+                    description=case.description,
                     outcome=Outcome.ERROR,
                     error_message=str(exc),
                 )
