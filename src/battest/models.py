@@ -38,6 +38,17 @@ def require_finite_positive(value: float) -> float:
     return value
 
 
+def is_rooted_path(value: str) -> bool:
+    """Return True for absolute, drive-letter, or root-anchored paths."""
+    path = Path(value)
+    if path.is_absolute() or bool(path.drive):
+        return True
+    stripped = value.lstrip()
+    if stripped.startswith(("/", "\\")):
+        return True
+    return len(stripped) >= 2 and stripped[1] == ":" and stripped[0].isalpha()
+
+
 FinitePositiveFloat = Annotated[float, AfterValidator(require_finite_positive)]
 
 
@@ -121,6 +132,17 @@ class FileMatcher(BaseModel):
     contains: str | None = Field(default=None, min_length=1)
     equals: str | None = None
     equals_file: str | None = Field(default=None, min_length=1)
+
+    @field_validator("path")
+    @classmethod
+    def path_must_be_relative(cls, value: str) -> str:
+        """Reject absolute file matcher paths; they must stay under the work dir."""
+        if is_rooted_path(value):
+            LOGGER.warning("rejecting rooted file matcher path %r", value)
+            raise ValueError(
+                "file matcher path must be relative to the isolated work directory"
+            )
+        return value
 
     @model_validator(mode="after")
     def reject_conflicting_existence(self) -> FileMatcher:

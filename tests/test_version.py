@@ -6,6 +6,7 @@ from importlib.metadata import PackageNotFoundError
 import importlib.util
 from pathlib import Path
 import sys
+import tomllib
 from types import ModuleType
 
 import pytest
@@ -251,10 +252,79 @@ def test_extract_release_notes_main_writes_stdout(
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text("## [2.0.0] - 2026-01-01\n\n- shipped\n", encoding="utf-8")
     monkeypatch.setattr(module, "_CHANGELOG", changelog)
+    monkeypatch.setattr(module, "project_version", lambda _path=None: "2.0.0")
     module.main()
     captured = capsys.readouterr()
     assert "2.0.0" in captured.out
     assert "shipped" in captured.out
+
+
+def test_extract_release_notes_requires_matching_project_version(
+    tmp_path: Path,
+) -> None:
+    module = _load_script("extract_release_notes.py")
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "## [1.0.0] - 2026-08-14\n\n- first\n\n## [0.9.0] - 2026-01-01\n\n- older\n",
+        encoding="utf-8",
+    )
+    section = module.extract_section_for_version(changelog, "1.0.0")
+    assert section.startswith("## [1.0.0]")
+    assert "first" in section
+    assert "older" not in section
+    with pytest.raises(SystemExit, match=r"\[2\.0\.0\]"):
+        module.extract_section_for_version(changelog, "2.0.0")
+
+
+def test_project_version_reads_pyproject(tmp_path: Path) -> None:
+    module = _load_script("extract_release_notes.py")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nversion = "3.2.1"\n', encoding="utf-8")
+    assert module.project_version(pyproject) == "3.2.1"
+    missing = tmp_path / "missing.toml"
+    with pytest.raises(SystemExit, match="Cannot read"):
+        module.project_version(missing)
+    pyproject.write_text("name = 'battest'\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="Missing \\[project\\]"):
+        module.project_version(pyproject)
+    pyproject.write_text("[project]\nname = 'battest'\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="Missing project.version"):
+        module.project_version(pyproject)
+
+
+def test_changelog_documents_current_version() -> None:
+    version = get_version()
+    changelog = (REPO_ROOT / "docs" / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## [{version}]" in changelog
+
+
+def test_dev_requirements_match_pyproject_extra() -> None:
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    extra = set(pyproject["project"]["optional-dependencies"]["dev"])
+    listed: set[str] = set()
+    for line in (
+        (REPO_ROOT / "requirements-dev.txt").read_text(encoding="utf-8").splitlines()
+    ):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("-r "):
+            continue
+        listed.add(stripped)
+    assert listed == extra
+
+
+def test_suite_does_not_use_hypothesis() -> None:
+    banned = "".join(("hypo", "thesis"))
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert banned not in pyproject.lower()
+    requirements_dev = (REPO_ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
+    assert banned not in requirements_dev.lower()
+    for path in (REPO_ROOT / "tests").rglob("*.py"):
+        if path.resolve() == Path(__file__).resolve():
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert banned not in text.lower(), path
 
 
 def test_battest_spec_is_console_onefile_without_icon() -> None:

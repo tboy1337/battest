@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import re
 import runpy
 import sys
 
@@ -562,3 +563,26 @@ def test_ci_retries_release_when_version_tag_is_missing() -> None:
     assert "tag v${NEW_VERSION} is missing; releasing." in script
     assert "should_release=true" in script
     assert "should_release=false" in script
+
+
+def test_ci_cancels_in_progress_pull_requests_only() -> None:
+    workflow = _load_ci_workflow()
+    concurrency = workflow["concurrency"]
+    assert isinstance(concurrency, dict)
+    assert concurrency["group"] == "ci-${{ github.workflow }}-${{ github.ref }}"
+    assert (
+        concurrency["cancel-in-progress"]
+        == "${{ github.event_name == 'pull_request' }}"
+    )
+
+
+def test_github_actions_are_not_pinned_to_shas() -> None:
+    sha_uses = re.compile(r"uses:\s+\S+@[0-9a-fA-F]{40}\b")
+    files = [_repo_root() / "action.yml"]
+    workflows = _repo_root() / ".github" / "workflows"
+    files.extend(sorted(workflows.glob("*.yml")))
+    files.extend(sorted(workflows.glob("*.yaml")))
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        match = sha_uses.search(text)
+        assert match is None, f"{path} pins an action to a commit SHA: {match.group(0)}"

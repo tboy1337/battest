@@ -17,6 +17,7 @@ from battest.models import (
     MockSpec,
     OutputMatcher,
     ParamOverlay,
+    is_rooted_path,
     merge_expect,
     merge_mocks,
     normalize_command_name,
@@ -1113,6 +1114,123 @@ def test_mock_exe_suffix_collapses_to_stem() -> None:
                 },
             }
         )
+
+
+def test_file_matcher_rejects_absolute_path() -> None:
+    assert is_rooted_path("C:/Windows/notepad.exe")
+    assert is_rooted_path("/tmp/out.txt")
+    assert is_rooted_path("\\\\server\\share\\out.txt")
+    assert not is_rooted_path("out.txt")
+    assert not is_rooted_path("subdir/out.txt")
+    with pytest.raises(ValidationError, match="relative"):
+        FileMatcher(path="C:/Windows/notepad.exe", exists=True)
+    with pytest.raises(ValidationError, match="relative"):
+        FileMatcher(path="/tmp/out.txt", exists=True)
+    with pytest.raises(ValidationError, match="relative"):
+        FileMatcher(path="\\\\server\\share\\out.txt", exists=True)
+
+
+def test_load_rejects_missing_equals_file(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: missing golden",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "  stdout:",
+                "    equals_file: missing.txt",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="stdout equals_file"):
+        load_cases_from_path(manifest)
+
+
+def test_load_rejects_missing_stderr_equals_file(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: missing stderr golden",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "  stderr:",
+                "    equals_file: missing-stderr.txt",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="stderr equals_file"):
+        load_cases_from_path(manifest)
+
+
+def test_load_rejects_escaping_equals_file(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: escaping golden",
+                "script: run.cmd",
+                "expect:",
+                "  files:",
+                "    - path: out.txt",
+                "      equals_file: ../secret.txt",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="escapes"):
+        load_cases_from_path(manifest)
+
+
+def test_load_accepts_existing_equals_file(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    (tmp_path / "golden.txt").write_text("hi\n", encoding="utf-8")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: golden present",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "  stdout:",
+                "    equals_file: golden.txt",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    assert cases[0].expect.stdout is not None
+    assert cases[0].expect.stdout.equals_file == "golden.txt"
+
+
+def test_load_accepts_existing_files_equals_file(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    (tmp_path / "golden.txt").write_text("hi\n", encoding="utf-8")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: file golden present",
+                "script: run.cmd",
+                "expect:",
+                "  files:",
+                "    - path: out.txt",
+                "      equals_file: golden.txt",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    assert cases[0].expect.files[0].equals_file == "golden.txt"
 
 
 def test_overlay_allow_rejects_path_and_normalizes_exe() -> None:

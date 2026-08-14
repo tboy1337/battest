@@ -5,7 +5,27 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
-Production-readiness fixes for the runner, GitHub Action, and PATH-mock stub.
+## [1.0.1] - 2026-08-15
+
+Production audit fixes for release metadata, CI, and fixture loading.
+
+- GitHub Actions concurrency no longer cancels in-progress `main` runs, so a
+  version-bump release cannot be aborted mid-publish.
+- Release notes are taken from the changelog section that matches
+  `[project].version`. A missing or empty section fails CI instead of
+  publishing notes from an older version.
+- PyPI classifier is Production/Stable. README and Action docs describe the
+  published package instead of a pre-release tree.
+- `requirements-dev.txt` includes Blinter so it matches `pip install -e ".[dev]"`.
+- Fixture load rejects missing or escaping `equals_file` paths as schema errors.
+  File matcher `path` values cannot be absolute.
+- CI and Action docs continue to pin GitHub Actions to version tags, not commit
+  SHAs.
+
+## [1.0.0] - 2026-08-14
+
+First public release: `battest run`, PATH mocks, composite Action, and the
+Rust stub helper.
 
 - Fixture `PATH` now replaces inherited `Path`/`PATH` even when both keys exist
   (POSIX-style environments and tests).
@@ -28,9 +48,5 @@ Production-readiness fixes for the runner, GitHub Action, and PATH-mock stub.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
-## [0.1.0] - 2026-08-14
-
-Initial public tree: `battest run`, PATH mocks, composite Action, and the
-Rust stub helper.
-
-[0.1.0]: https://github.com/tboy1337/battest/releases/tag/v0.1.0
+[1.0.1]: https://github.com/tboy1337/battest/releases/tag/v1.0.1
+[1.0.0]: https://github.com/tboy1337/battest/releases/tag/v1.0.0

@@ -14,7 +14,7 @@ AGPL-3.0-or-later ([COPYING](COPYING)). Changelog: [docs/CHANGELOG.md](docs/CHAN
 A version bump of `[project].version` in `pyproject.toml` on `main` is the
 release trigger (Windows exe zip, GitHub Release, and PyPI). If that version
 never got a `v*` tag, the next successful `main` CI run retries the release.
-Do not bump the version until the `PYPI_BATTEST` GitHub Actions secret is set.
+Publishing to PyPI requires the `PYPI_BATTEST` GitHub Actions secret.
 
 ## Installation
 
@@ -61,16 +61,10 @@ pip uninstall battest
 
 ## Five-minute start
 
-1. Install from PyPI (or git until the first release is published):
+1. Install from PyPI:
 
 ```text
 pip install battest
-```
-
-Until a PyPI release exists:
-
-```text
-pip install git+https://github.com/tboy1337/battest.git
 ```
 
 2. Create `hello.cmd`:

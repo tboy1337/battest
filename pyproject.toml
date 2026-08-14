@@ -4,7 +4,7 @@ requires = [ "setuptools>=77" ]
 
 [project]
 name = "battest"
-version = "1.0.0"
+version = "1.0.1"
 description = """\
   battest is a runtime test runner for Windows batch files. It executes real cmd.exe scripts and asserts on exit \
   codes, output, environment, and filesystem side effects.\
@@ -30,7 +30,7 @@ maintainers = [ { name = "tboy1337", email = "tboy1337@proton.me" } ]
 authors = [ { name = "tboy1337", email = "tboy1337@proton.me" } ]
 requires-python = ">=3.11"
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Operating System :: Microsoft :: Windows",

@@ -61,7 +61,8 @@ directory are rejected. `script`, `setup`, and `teardown` are copied into the
 work directory using that same relative layout, so `%~dp0` is the workdir copy
 of the script directory. Sibling files that are not the script, setup, or
 teardown still need `copy:`. `equals_file` paths are likewise confined to the
-fixture directory (absolute paths and `..` escapes are rejected).
+fixture directory (absolute paths and `..` escapes are rejected). Missing
+`equals_file` targets are schema errors at load time, not later case failures.
 
 `setup` runs before the script under test. The case timeout starts after
 workdir prep (copying fixtures and PATH stubs). `timeout_seconds` (and the CLI
@@ -116,10 +117,12 @@ locals, matching cmd.exe.
 ## Discovery
 
 `battest run [path]` walks `*.battest.yaml` and `expect.yaml`+`input.cmd`.
-Default path is `./tests` when that directory exists, otherwise the current
+Default path is `./tests` when that directory contains battest fixtures
+(`*.battest.yaml` or `expect.yaml` beside `input.cmd`); otherwise the current
 directory. These directory names are skipped: `.git`, `.mypy_cache`,
 `.pytest_cache`, `.venv`, `__pycache__`, `build`, `dist`, `htmlcov`, `target`,
 `vendor`, `venv`. Scanning a directory uses root-relative case ids
 (`a/hello`, `b/hello`) so parallel runs cannot collide. Duplicate ids are a
 schema error. Running a single file keeps the stem id (`hello`). File matcher
-paths cannot escape the isolated work directory.
+paths must be relative to the isolated work directory; absolute paths are a
+schema error, and paths cannot escape that directory at assertion time.

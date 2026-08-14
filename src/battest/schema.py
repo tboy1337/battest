@@ -143,6 +143,29 @@ def _collect_warnings(
     return warnings
 
 
+def _equals_file_entries(expect: Expect) -> list[tuple[str, str]]:
+    """Return (label, relative path) pairs for every equals_file on expect."""
+    entries: list[tuple[str, str]] = []
+    if expect.stdout is not None and expect.stdout.equals_file is not None:
+        entries.append(("stdout equals_file", expect.stdout.equals_file))
+    if expect.stderr is not None and expect.stderr.equals_file is not None:
+        entries.append(("stderr equals_file", expect.stderr.equals_file))
+    for matcher in expect.files:
+        if matcher.equals_file is not None:
+            entries.append(("files equals_file", matcher.equals_file))
+    return entries
+
+
+def _validate_equals_files(base_dir: Path, expect: Expect, source: Path) -> None:
+    """Require equals_file paths to exist and stay under the fixture directory."""
+    for label, relative in _equals_file_entries(expect):
+        path = _confine_to_fixture(base_dir, relative, source, label)
+        if not path.is_file():
+            LOGGER.error("%s missing for %s: %s", label, source, relative)
+            raise SchemaError(f"{label} not found for {source}: {relative}")
+        LOGGER.debug("%s resolved %s -> %s", label, relative, path)
+
+
 def _copy_paths(base_dir: Path, names: list[str], source: Path) -> list[Path]:
     resolved: list[Path] = []
     for name in names:
@@ -182,6 +205,7 @@ def _case_from_document(
                 f"teardown script not found for {source}: {document.teardown}"
             )
     warnings = _collect_warnings(script_path, mocks, allow, args)
+    _validate_equals_files(base_dir, expect, source)
     LOGGER.debug(
         "resolved case id=%s script=%s args=%s timeout=%s mocks=%s",
         case_id,
