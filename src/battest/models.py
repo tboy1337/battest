@@ -29,6 +29,7 @@ LOGGER = get_logger("models")
 _COMMAND_EXTENSIONS = (".exe", ".cmd", ".bat", ".com")
 _COMMAND_NAME_RE = re.compile(COMMAND_NAME_PATTERN)
 _NESTED_QUANTIFIER_RE = re.compile(r"\((?:\?[P:=!<][^)]*)?[^()]*[+*{][^()]*\)[+*?{]")
+_QUANTIFIED_ALTERNATION_RE = re.compile(r"\((?:\?[P:=!<][^)]*)?[^()]*\|[^()]*\)[+*?{]")
 
 
 def require_finite_positive(value: float) -> float:
@@ -84,7 +85,7 @@ class OutputMatcher(BaseModel):
     @field_validator("regex")
     @classmethod
     def regex_must_compile(cls, value: str | None) -> str | None:
-        """Reject patterns that cannot be compiled, are too long, or nested-quantify."""
+        """Reject patterns that cannot be compiled, are too long, or can ReDoS."""
         if value is None:
             return None
         if len(value) > MAX_REGEX_PATTERN_LENGTH:
@@ -98,6 +99,11 @@ class OutputMatcher(BaseModel):
             LOGGER.warning("rejecting regex with nested quantifiers")
             raise ValueError(
                 "regex pattern has nested quantifiers that can hang the runner"
+            )
+        if _QUANTIFIED_ALTERNATION_RE.search(value):
+            LOGGER.warning("rejecting regex with quantified alternation")
+            raise ValueError(
+                "regex pattern has quantified alternation that can hang the runner"
             )
         try:
             re.compile(value)

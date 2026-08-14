@@ -2,7 +2,11 @@
 
 battest accepts two equivalent shapes. Runtime loading validates documents with
 the Pydantic models in the package. `schema/battest-expect.schema.json` is the
-editor/CI catalog (copied into package data); it is not the loader.
+editor/CI catalog (copied into package data); it is not the loader. JSON Schema
+`commandName` keys must already be lowercase stems; runtime also accepts mixed
+case and a trailing `.exe` / `.cmd` / `.bat` / `.com` suffix and normalizes
+them. JSON Schema rejects reserved device names, rooted `files[].path` values,
+and `regex` strings longer than 512 characters.
 
 ## Manifest file
 
@@ -98,8 +102,12 @@ Omit `script` when `input.cmd` sits beside `expect.yaml`.
 requires the captured text to contain no CR bytes. `crlf` requires CRLF line
 endings in the captured text (lone LF fails) and canonicalizes expected YAML
 LF to CRLF so authors can write logical lines. Invalid `regex` patterns are a
-schema error. `regex` is matched against newline-normalized captured text; the
-pattern itself is not rewritten. `contains` and mock `args_contains` must be
+schema error. Nested quantifiers such as `(a+)+`, quantified alternation such
+as `(a|a)*`, and patterns longer than 512 characters are rejected at load
+time. `regex` is matched against newline-normalized captured text; the
+pattern itself is not rewritten. `empty: true` treats surrounding whitespace
+as empty; `empty: false` fails when the stripped text is empty. `contains` and
+mock `args_contains` must be
 non-empty; `""` is a schema error. A non-UTF-8 `equals_file` or workdir file
 read for `contains`/`equals` is a case failure, not a runner crash. Each
 `files` entry must set at least one of `exists`, `not_exists`, `contains`,

@@ -17,6 +17,7 @@ from battest.models import (
     Expect,
     MockSpec,
     ParamOverlay,
+    is_rooted_path,
     merge_expect,
     merge_mocks,
 )
@@ -70,7 +71,7 @@ def parse_document(payload: Mapping[str, Any], source: Path) -> CaseDocument:
 
 def _confine_to_fixture(base_dir: Path, value: str, source: Path, label: str) -> Path:
     """Resolve value under base_dir and reject absolute or escaping paths."""
-    if Path(value).is_absolute():
+    if is_rooted_path(value):
         raise SchemaError(
             f"{label} path escapes fixture directory for {source}: {value}"
         )

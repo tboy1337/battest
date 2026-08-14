@@ -70,6 +70,7 @@ command under `allow:`.
 ## Internals
 
 Relative `del out.txt` only affects the isolated working directory. Scripts
-that write via `%~dp0` also stay inside that workdir copy. An internal
+that write via `%~dp0` also stay inside that workdir copy. A destructive
+internal (`copy`, `del`, `erase`, `move`, `rd`, `ren`, `rename`, `rmdir`)
 used with an absolute path (`del C:\Windows\...`) cannot be mocked; battest
 emits a warning. Run those cases in a disposable VM.

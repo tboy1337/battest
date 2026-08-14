@@ -3,7 +3,8 @@ try {
 $binPath = '__BATTEST_BIN__'
 $path = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not $path) { $path = '' }
-if ($path -notlike "*$binPath*") {
+$segments = $path -split ';' | Where-Object { $_ -ne '' }
+if ($segments -notcontains $binPath) {
 if (-not $path) { $newPath = $binPath } else { $newPath = $path.TrimEnd(';') + ';' + $binPath }
 [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
 Write-Host 'battest added to User PATH permanently'

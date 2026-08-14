@@ -7,7 +7,12 @@ from pathlib import Path
 from pydantic import ValidationError
 import pytest
 
-from battest.constants import COMMAND_NAME_MAX_LENGTH, COMMAND_NAME_PATTERN, MAX_JOBS
+from battest.constants import (
+    COMMAND_NAME_MAX_LENGTH,
+    COMMAND_NAME_PATTERN,
+    MAX_JOBS,
+    MAX_REGEX_PATTERN_LENGTH,
+)
 from battest.models import (
     CallExpectation,
     CaseDocument,
@@ -48,6 +53,16 @@ def test_schema_payload_is_object() -> None:
     )
     assert payload["$defs"]["commandName"]["maxLength"] == COMMAND_NAME_MAX_LENGTH
     assert payload["$defs"]["commandName"]["pattern"] == COMMAND_NAME_PATTERN
+    assert "not" in payload["$defs"]["commandName"]
+    reserved = payload["$defs"]["commandName"]["not"]["pattern"]
+    assert "nul" in reserved
+    assert "con" in reserved
+    assert (
+        payload["$defs"]["outputMatcher"]["properties"]["regex"]["maxLength"]
+        == MAX_REGEX_PATTERN_LENGTH
+    )
+    path_pattern = payload["$defs"]["fileMatcher"]["properties"]["path"]["pattern"]
+    assert "[A-Za-z]:" in path_pattern
     exit_schema = payload["$defs"]["mockSpec"]["properties"]["exit_code"]
     assert exit_schema["minimum"] == 0
     assert exit_schema["maximum"] == 255
@@ -1118,12 +1133,15 @@ def test_mock_exe_suffix_collapses_to_stem() -> None:
 
 def test_file_matcher_rejects_absolute_path() -> None:
     assert is_rooted_path("C:/Windows/notepad.exe")
+    assert is_rooted_path("C:foo")
     assert is_rooted_path("/tmp/out.txt")
     assert is_rooted_path("\\\\server\\share\\out.txt")
     assert not is_rooted_path("out.txt")
     assert not is_rooted_path("subdir/out.txt")
     with pytest.raises(ValidationError, match="relative"):
         FileMatcher(path="C:/Windows/notepad.exe", exists=True)
+    with pytest.raises(ValidationError, match="relative"):
+        FileMatcher(path="C:foo", exists=True)
     with pytest.raises(ValidationError, match="relative"):
         FileMatcher(path="/tmp/out.txt", exists=True)
     with pytest.raises(ValidationError, match="relative"):
@@ -1188,6 +1206,69 @@ def test_load_rejects_escaping_equals_file(tmp_path: Path) -> None:
     )
     with pytest.raises(SchemaError, match="escapes"):
         load_cases_from_path(manifest)
+
+
+def test_load_rejects_rooted_script_and_equals_file(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    rooted_script = tmp_path / "rooted.battest.yaml"
+    rooted_script.write_text(
+        "\n".join(
+            [
+                "description: rooted script",
+                "script: C:foo",
+                "expect:",
+                "  exit_code: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="escapes"):
+        load_cases_from_path(rooted_script)
+    rooted_equals = tmp_path / "equals.battest.yaml"
+    rooted_equals.write_text(
+        "\n".join(
+            [
+                "description: rooted golden",
+                "script: run.cmd",
+                "expect:",
+                "  stdout:",
+                "    equals_file: C:foo",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="escapes"):
+        load_cases_from_path(rooted_equals)
+    unc_equals = tmp_path / "unc.battest.yaml"
+    unc_equals.write_text(
+        "\n".join(
+            [
+                "description: unc golden",
+                "script: run.cmd",
+                "expect:",
+                "  stdout:",
+                r"    equals_file: \\server\share\out.txt",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="escapes"):
+        load_cases_from_path(unc_equals)
+    slash_equals = tmp_path / "slash.battest.yaml"
+    slash_equals.write_text(
+        "\n".join(
+            [
+                "description: slash golden",
+                "script: run.cmd",
+                "expect:",
+                "  stdout:",
+                "    equals_file: /rooted.txt",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="escapes"):
+        load_cases_from_path(slash_equals)
 
 
 def test_load_accepts_existing_equals_file(tmp_path: Path) -> None:
