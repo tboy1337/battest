@@ -15,6 +15,7 @@ from battest.report import (
     render_console,
     write_junit_xml,
     write_usage_junit,
+    xml_safe_text,
 )
 
 
@@ -201,3 +202,46 @@ def test_write_usage_junit(tmp_path: Path) -> None:
     assert 'tests="1"' in text
     assert 'errors="1"' in text
     assert "no battest fixtures found" in text
+
+
+def test_xml_safe_text_replaces_illegal_xml_chars() -> None:
+    assert xml_safe_text("ok") == "ok"
+    assert "\x00" not in xml_safe_text("a\x00b")
+    assert xml_safe_text("a\x00b") == "a\ufffdb"
+    assert xml_safe_text("keep\t\n\r") == "keep\t\n\r"
+
+
+def test_write_junit_xml_strips_illegal_xml_chars(tmp_path: Path) -> None:
+    path = tmp_path / "junit.xml"
+    write_junit_xml(
+        [
+            RunResult(
+                case_id="id\x00nul",
+                description="d",
+                outcome=Outcome.FAIL,
+                failures=[
+                    AssertionFailure(
+                        kind="stdout",
+                        message="bad\x01msg",
+                        actual="out\x00put",
+                    )
+                ],
+                duration_seconds=0.01,
+            ),
+            RunResult(
+                case_id="err",
+                description="d",
+                outcome=Outcome.ERROR,
+                error_message="boom\x08",
+                duration_seconds=0.01,
+            ),
+        ],
+        path,
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "\x00" not in text
+    assert "\x01" not in text
+    assert "\x08" not in text
+    assert "id" in text
+    assert "bad" in text
+    assert "boom" in text

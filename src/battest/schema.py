@@ -97,11 +97,17 @@ def _require_script(base_dir: Path, document: CaseDocument, source: Path) -> Pat
     raise SchemaError(f"{source} must set script or sit beside input.cmd")
 
 
-def _collect_warnings(document: CaseDocument, script_path: Path) -> list[str]:
+def _collect_warnings(
+    script_path: Path,
+    mocks: dict[str, MockSpec],
+    allow: list[str],
+    args: list[str],
+) -> list[str]:
     catalog = load_catalog()
     warnings: list[str] = []
-    command_names = set(document.mocks.keys())
-    command_names.update(document.allow)
+    command_names = set(mocks.keys())
+    command_names.update(allow)
+    mock_keys = {key.lower() for key in mocks}
     for name in sorted(command_names):
         lowered = name.lower()
         if catalog.is_deprecated(lowered):
@@ -116,7 +122,7 @@ def _collect_warnings(document: CaseDocument, script_path: Path) -> list[str]:
             message = (
                 f"command '{name}' is a cmd.exe internal and cannot be PATH-mocked"
             )
-            if lowered in {key.lower() for key in document.mocks}:
+            if lowered in mock_keys:
                 raise SchemaError(message)
             LOGGER.warning("%s", message)
             warnings.append(message)
@@ -129,7 +135,7 @@ def _collect_warnings(document: CaseDocument, script_path: Path) -> list[str]:
         message = f"invalid percent-tilde form {token} in {script_path.name}"
         LOGGER.warning("%s", message)
         warnings.append(message)
-    arg_blob = " ".join(document.args)
+    arg_blob = " ".join(args)
     for token in catalog.invalid_tilde_forms(arg_blob):
         message = f"invalid percent-tilde form {token} in args"
         LOGGER.warning("%s", message)
@@ -175,7 +181,7 @@ def _case_from_document(
             raise SchemaError(
                 f"teardown script not found for {source}: {document.teardown}"
             )
-    warnings = _collect_warnings(document, script_path)
+    warnings = _collect_warnings(script_path, mocks, allow, args)
     LOGGER.debug(
         "resolved case id=%s script=%s args=%s timeout=%s mocks=%s",
         case_id,

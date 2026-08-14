@@ -20,7 +20,9 @@ Mitigations that **are** included:
   budget. After expiry, teardown still gets at least five seconds.
 - `taskkill /T` on timeout, then a bounded wait so a surviving child cannot
   hang the runner
-- Helper `BATTEST_*` variables are cleared before the script under test runs
+- Helper `BATTEST_*` variables are not injected into the script environment.
+  The wrapper calls the copied script via `%~dp0` and writes the env dump next
+  to the wrapper, so a script cannot redirect that dump by changing variables.
 - Warnings for cmd internals used with absolute paths
 
 Mitigations that **are not** included:

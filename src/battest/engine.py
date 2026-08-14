@@ -47,16 +47,32 @@ class PreparedWork:
     teardown_path: Path | None
 
 
-_WRAPPER_TEMPLATE = """@echo off
-set "_bt_sut=%BATTEST_SUT%"
-set "_bt_env=%BATTEST_ENVFILE%"
-set BATTEST_SUT=
-set BATTEST_ENVFILE=
-call "%_bt_sut%" %*
-set "_bt_rc=%ERRORLEVEL%"
-set > "%_bt_env%"
-exit /b %_bt_rc%
-"""
+_WRAPPER_UNSAFE_CHARS = frozenset('"%\r\n')
+
+
+def build_wrapper_text(sut_relative: str) -> str:
+    """Return wrapper cmd text that calls sut_relative beside the wrapper."""
+    LOGGER.debug("building wrapper for relative sut %s", sut_relative)
+    return (
+        "@echo off\n"
+        f'call "%~dp0{sut_relative}" %*\n'
+        'set "BATTEST_RC=%ERRORLEVEL%"\n'
+        f'set > "%~dp0{ENV_DUMP_NAME}"\n'
+        "exit /b %BATTEST_RC%\n"
+    )
+
+
+def wrapper_sut_relative(work_dir: Path, sut_path: Path) -> str:
+    """Return a cmd-safe path from the wrapper directory to the copied script."""
+    try:
+        relative = sut_path.resolve().relative_to(work_dir.resolve())
+    except ValueError as exc:
+        raise ValueError(f"script path escapes work directory: {sut_path}") from exc
+    text = str(relative).replace("/", "\\")
+    if any(char in text for char in _WRAPPER_UNSAFE_CHARS):
+        raise ValueError(f"script path is not safe for cmd.exe wrapper: {sut_path}")
+    LOGGER.debug("wrapper relative sut=%s", text)
+    return text
 
 
 class EngineError(RuntimeError):
@@ -254,17 +270,17 @@ def _combined_env(
     case: Case,
     work_dir: Path,
     mock_dir: Path | None,
-    sut_path: Path | None = None,
 ) -> dict[str, str]:
     env = {str(key): str(value) for key, value in os.environ.items()}
     env.update(case.env)
-    env["BATTEST_SUT"] = str(sut_path if sut_path is not None else case.script_path)
-    env["BATTEST_ENVFILE"] = str(work_dir / ENV_DUMP_NAME)
     env["NoDefaultCurrentDirectoryInEXEPath"] = "1"
     path_key = collapse_path_keys(env)
     if mock_dir is not None:
         env[path_key] = str(mock_dir) + os.pathsep + env.get(path_key, "")
         LOGGER.debug("PATH prefixed with mock dir %s key=%s", mock_dir, path_key)
+    LOGGER.debug(
+        "combined env work_dir=%s helper_battest_keys_injected=false", work_dir
+    )
     return env
 
 
@@ -491,10 +507,13 @@ def _prepare_work_dir(case: Case, config: EngineConfig, work_dir: Path) -> Prepa
     _seed_work_dir(work_dir, to_copy, base_dir)
     mocks = effective_mocks(case.mocks, case.allow, config.safe_defaults)
     mock_dir = write_mock_tree(work_dir, mocks) if mocks else None
-    wrapper = work_dir / WRAPPER_NAME
-    wrapper.write_text(_WRAPPER_TEMPLATE, encoding="utf-8")
     sut_path = _relocated_path(work_dir, case.script_path, base_dir)
-    env = _combined_env(case, work_dir, mock_dir, sut_path=sut_path)
+    wrapper = work_dir / WRAPPER_NAME
+    wrapper.write_text(
+        build_wrapper_text(wrapper_sut_relative(work_dir, sut_path)),
+        encoding="utf-8",
+    )
+    env = _combined_env(case, work_dir, mock_dir)
     setup_path = (
         _relocated_path(work_dir, case.setup_path, base_dir)
         if case.setup_path is not None

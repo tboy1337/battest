@@ -56,13 +56,18 @@ function Convert-BattestExtraArg {
         )
     }
     try {
-        $parsed = ConvertFrom-Json -InputObject $trimmed
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            $parsed = ConvertFrom-Json -InputObject $trimmed -NoEnumerate
+        }
+        else {
+            $parsed = ConvertFrom-Json -InputObject $trimmed
+        }
     }
     catch {
         throw "battest extra-args is not valid JSON: $_"
     }
     if ($null -eq $parsed) {
-        throw 'battest extra-args JSON must be an array of strings'
+        return [string[]]@()
     }
     if ($parsed -is [System.Management.Automation.PSCustomObject]) {
         throw 'battest extra-args JSON must be an array of strings'
@@ -131,13 +136,16 @@ function Invoke-BattestAction {
     Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "junit-xml=$junit" -Encoding utf8
 
     $cmdArgs = [System.Collections.Generic.List[string]]::new()
-    foreach ($token in @('-m', 'battest', 'run', $safe, '--junit-xml', $junit)) {
+    foreach ($token in @('-m', 'battest', 'run')) {
         $cmdArgs.Add($token)
     }
     if ($target) {
         $cmdArgs.Add($target)
     }
     foreach ($token in $extraArgs) {
+        $cmdArgs.Add($token)
+    }
+    foreach ($token in @($safe, '--junit-xml', $junit)) {
         $cmdArgs.Add($token)
     }
 

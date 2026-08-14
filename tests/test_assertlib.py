@@ -8,6 +8,7 @@ from typing import cast
 import pytest
 
 from battest.assertlib import (
+    _match_one_call,
     apply_newline_mode,
     evaluate_case,
     match_env,
@@ -492,6 +493,11 @@ def test_match_mock_calls() -> None:
         CallExpectation()
     with pytest.raises(ValueError, match="not_called"):
         CallExpectation(not_called=False)
+
+
+def test_match_one_call_without_constraint_is_noop() -> None:
+    empty = CallExpectation.model_construct()
+    assert _match_one_call("net", empty, ["session"], 2000) == []
 
 
 def test_match_mock_calls_whitespace_only_line_counts_as_call() -> None:

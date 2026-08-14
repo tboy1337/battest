@@ -52,6 +52,10 @@ Describe 'Convert-BattestExtraArg' {
         { Convert-BattestExtraArg -Extra '[1,2]' } | Should -Throw '*array of strings*'
         { Convert-BattestExtraArg -Extra '[{"a":1}]' } | Should -Throw '*array of strings*'
     }
+
+    It 'treats an empty JSON array as no extra-args' {
+        Convert-BattestExtraArg -Extra '[]' | Should -HaveCount 0
+    }
 }
 
 Describe 'Invoke-BattestAction' {
@@ -110,6 +114,28 @@ Describe 'Invoke-BattestAction' {
         $source | Should -Not -Match 'cmdArgs -join'
         $source | Should -Match 'Starting battest'
         Invoke-BattestAction | Should -Be 0
+        $script:CapturedArgs | Should -Contain '--jobs'
+    }
+
+    It 'keeps Action junit and safe-defaults flags after extra-args' {
+        $env:BATTEST_EXTRA_ARGS = '["--no-safe-defaults","--junit-xml","C:\\other.xml","--jobs","1"]'
+        Invoke-BattestAction | Should -Be 0
+        $junit = Join-Path -Path $script:Work -ChildPath 'battest-junit.xml'
+        $safeLast = -1
+        $junitLast = -1
+        for ($index = 0; $index -lt $script:CapturedArgs.Count; $index++) {
+            $token = $script:CapturedArgs[$index]
+            if ($token -eq '--safe-defaults' -or $token -eq '--no-safe-defaults') {
+                $safeLast = $index
+            }
+            if ($token -eq '--junit-xml') {
+                $junitLast = $index
+            }
+        }
+        $safeLast | Should -BeGreaterThan -1
+        $junitLast | Should -BeGreaterThan -1
+        $script:CapturedArgs[$safeLast] | Should -Be '--safe-defaults'
+        $script:CapturedArgs[$junitLast + 1] | Should -Be $junit
         $script:CapturedArgs | Should -Contain '--jobs'
     }
 }

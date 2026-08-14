@@ -6,11 +6,13 @@ from pathlib import Path
 import runpy
 import sys
 
+from pydantic import ValidationError
 import pytest
 import yaml
 
 from battest.api import load_case, run_case, run_cases
 from battest.cli import build_parser, main
+from battest.constants import MAX_JOBS
 from battest.engine import EngineError
 from battest.models import Case, EngineConfig, Expect, Outcome, RunResult
 
@@ -185,6 +187,29 @@ def test_main_rejects_non_positive_timeout(
     assert called["execute"] is False
 
 
+def test_main_rejects_non_finite_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    (tmp_path / "ok.battest.yaml").write_text(
+        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+    called = {"execute": False}
+
+    def fake_execute(_cases: list[Case], _config: EngineConfig) -> list[RunResult]:
+        called["execute"] = True
+        return []
+
+    monkeypatch.setattr("battest.cli.execute_cases", fake_execute)
+    assert main(["run", str(tmp_path), "--timeout", "nan"]) == 2
+    assert main(["run", str(tmp_path), "--timeout", "inf"]) == 2
+    assert main(["run", str(tmp_path), "--timeout=-inf"]) == 2
+    assert called["execute"] is False
+
+
 def test_main_rejects_jobs_less_than_one(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -204,6 +229,7 @@ def test_main_rejects_jobs_less_than_one(
     monkeypatch.setattr("battest.cli.execute_cases", fake_execute)
     assert main(["run", str(tmp_path), "--jobs", "0"]) == 2
     assert main(["run", str(tmp_path), "--jobs", "-3"]) == 2
+    assert main(["run", str(tmp_path), "--jobs", str(MAX_JOBS + 1)]) == 2
     assert called["execute"] is False
 
 
@@ -274,6 +300,37 @@ def test_main_junit_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     assert main(["run", str(tmp_path), "--junit-xml", str(junit)]) == 2
 
 
+def test_main_usage_junit_oserror(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+
+    def boom_usage(_path: Path, _message: str) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("battest.cli.write_usage_junit", boom_usage)
+    junit = tmp_path / "junit.xml"
+    assert main(["run", str(tmp_path), "--junit-xml", str(junit)]) == 2
+
+
+def test_main_engine_config_validation_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    (tmp_path / "ok.battest.yaml").write_text(
+        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+
+    def boom_config(**_kwargs: object) -> EngineConfig:
+        return EngineConfig(default_timeout_seconds=float("nan"))
+
+    monkeypatch.setattr("battest.cli.EngineConfig", boom_config)
+    assert main(["run", str(tmp_path)]) == 2
+
+
 def test_load_case_file_and_dir(tmp_path: Path) -> None:
     script = tmp_path / "input.cmd"
     script.write_text("@echo off\n", encoding="utf-8")
@@ -307,6 +364,22 @@ def test_run_case_and_run_cases_require_windows(
         run_case(case)
     with pytest.raises(EngineError):
         run_cases([case], jobs=2)
+
+
+def test_run_case_rejects_non_finite_timeout(tmp_path: Path) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="x",
+        description="x",
+        source_path=tmp_path / "expect.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+    with pytest.raises(ValidationError, match="finite"):
+        run_case(case, timeout_seconds=float("inf"))
+    with pytest.raises(ValidationError, match="finite"):
+        run_cases([case], timeout_seconds=float("nan"))
 
 
 @pytest.mark.windows

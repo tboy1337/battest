@@ -8,6 +8,7 @@ import pytest
 
 from battest.mocks import (
     MockError,
+    _confined_mock_path,
     effective_mocks,
     read_call_logs,
     stub_executable,
@@ -100,6 +101,22 @@ def test_write_mock_tree_without_call_recording(tmp_path: Path) -> None:
 def test_write_mock_tree_skips_internals(tmp_path: Path) -> None:
     mock_dir = write_mock_tree(tmp_path, {"del": MockSpec(exit_code=0)})
     assert not (mock_dir / "del.exe").exists()
+
+
+def test_write_mock_tree_rejects_escaping_and_reserved_names(tmp_path: Path) -> None:
+    with pytest.raises(MockError, match="invalid command name"):
+        write_mock_tree(tmp_path, {"../evil": MockSpec(exit_code=0)})
+    with pytest.raises(MockError, match="reserved"):
+        write_mock_tree(tmp_path, {"nul": MockSpec(exit_code=0)})
+
+
+def test_confined_mock_path_rejects_separators_and_escapes(tmp_path: Path) -> None:
+    mock_dir = tmp_path / "mocks"
+    mock_dir.mkdir()
+    with pytest.raises(MockError, match="plain file name"):
+        _confined_mock_path(mock_dir, "evil", "../evil.exe")
+    with pytest.raises(MockError, match="outside the mock directory"):
+        _confined_mock_path(mock_dir, "evil", "..")
 
 
 def test_read_call_logs_missing_dir(tmp_path: Path) -> None:

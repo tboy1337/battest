@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 from pathlib import Path
 import sys
 
+from pydantic import ValidationError
+
 from battest._version import __version__
-from battest.constants import DEFAULT_MAX_DIFF, DEFAULT_TIMEOUT_SECONDS
+from battest.constants import DEFAULT_MAX_DIFF, DEFAULT_TIMEOUT_SECONDS, MAX_JOBS
 from battest.discover import default_root, discover_cases
 from battest.engine import EngineError, execute_cases, require_windows
 from battest.logging_config import configure_logging, get_logger
@@ -108,10 +111,12 @@ def _run_command(args: argparse.Namespace) -> int:
         args.timeout,
         args.safe_defaults,
     )
-    if args.timeout <= 0:
-        return _usage_failure(args, "--timeout must be positive")
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        return _usage_failure(args, "--timeout must be a finite number greater than 0")
     if args.jobs < 1:
         return _usage_failure(args, "--jobs must be at least 1")
+    if args.jobs > MAX_JOBS:
+        return _usage_failure(args, f"--jobs must be at most {MAX_JOBS}")
     if args.max_diff < 1:
         return _usage_failure(args, "--max-diff must be at least 1")
     try:
@@ -120,12 +125,15 @@ def _run_command(args: argparse.Namespace) -> int:
         return _usage_failure(args, str(exc))
     if not cases:
         return _usage_failure(args, f"no battest fixtures found under {root}")
-    config = EngineConfig(
-        safe_defaults=args.safe_defaults,
-        max_diff=args.max_diff,
-        jobs=args.jobs,
-        default_timeout_seconds=args.timeout,
-    )
+    try:
+        config = EngineConfig(
+            safe_defaults=args.safe_defaults,
+            max_diff=args.max_diff,
+            jobs=args.jobs,
+            default_timeout_seconds=args.timeout,
+        )
+    except ValidationError as exc:
+        return _usage_failure(args, str(exc))
     try:
         results = execute_cases(cases, config)
     except EngineError as exc:

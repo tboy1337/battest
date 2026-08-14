@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 import pytest
 
+from battest.constants import MAX_JOBS
 from battest.models import (
     CallExpectation,
     CaseDocument,
@@ -15,8 +16,10 @@ from battest.models import (
     FileMatcher,
     MockSpec,
     OutputMatcher,
+    ParamOverlay,
     merge_expect,
     merge_mocks,
+    normalize_command_name,
 )
 from battest.schema import (
     SchemaError,
@@ -38,6 +41,10 @@ def test_schema_payload_is_object() -> None:
     payload = schema_payload()
     assert payload["title"] == "battest fixture document"
     assert "expect" in payload["$defs"]
+    assert "commandName" in payload["$defs"]
+    assert payload["properties"]["mocks"]["propertyNames"]["$ref"].endswith(
+        "commandName"
+    )
     exit_schema = payload["$defs"]["mockSpec"]["properties"]["exit_code"]
     assert exit_schema["minimum"] == 0
     assert exit_schema["maximum"] == 255
@@ -341,6 +348,74 @@ def test_internal_mock_is_schema_error(tmp_path: Path) -> None:
         load_cases_from_path(manifest)
 
 
+def test_params_overlay_internal_mock_is_schema_error(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: overlay internal mock",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "params:",
+                "  - id: del",
+                "    mocks:",
+                "      del:",
+                "        exit_code: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="internal"):
+        load_cases_from_path(manifest)
+
+
+def test_params_overlay_allow_internal_warns(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: overlay allow internal",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "params:",
+                "  - id: del",
+                "    allow:",
+                "      - del",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    overlay = cases[1]
+    assert any("cannot be PATH-mocked" in item for item in overlay.warnings)
+
+
+def test_params_overlay_invalid_tilde_in_args_warns(tmp_path: Path) -> None:
+    _write_script(tmp_path, "run.cmd")
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: overlay tilde args",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "params:",
+                "  - id: tilde",
+                "    args: ['%~*']",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(manifest)
+    overlay = cases[1]
+    assert any("%~*" in item for item in overlay.warnings)
+
+
 def test_invalid_yaml(tmp_path: Path) -> None:
     path = tmp_path / "bad.battest.yaml"
     path.write_text(":\n  -", encoding="utf-8")
@@ -445,6 +520,41 @@ def test_env_expect_rejects_non_string_values() -> None:
             },
             Path("doc.yaml"),
         )
+
+
+def test_env_expect_rejects_non_mapping_values_with_extras() -> None:
+    with pytest.raises(SchemaError, match="must be a mapping"):
+        parse_document(
+            {
+                "description": "env",
+                "expect": {"env": {"values": ["not-a-map"], "FOO": "bar"}},
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_env_expect_rejects_non_mapping_explicit_values() -> None:
+    with pytest.raises(SchemaError):
+        parse_document(
+            {
+                "description": "env",
+                "expect": {"env": {"values": ["FOO"], "unset": []}},
+            },
+            Path("doc.yaml"),
+        )
+
+
+def test_case_env_rejects_non_mapping() -> None:
+    with pytest.raises(SchemaError):
+        parse_document(
+            {"description": "t", "env": ["FOO"], "expect": {"exit_code": 0}},
+            Path("doc.yaml"),
+        )
+
+
+def test_param_overlay_mocks_none_is_allowed() -> None:
+    overlay = ParamOverlay.model_validate({"id": "x", "mocks": None})
+    assert overlay.mocks is None
 
 
 def test_empty_contains_is_rejected() -> None:
@@ -901,3 +1011,120 @@ def test_allow_internal_command_warns(tmp_path: Path) -> None:
 def test_engine_config_max_diff_must_be_positive() -> None:
     with pytest.raises(ValidationError):
         EngineConfig(max_diff=0)
+
+
+def test_engine_config_timeout_must_be_finite() -> None:
+    with pytest.raises(ValidationError, match="finite"):
+        EngineConfig(default_timeout_seconds=float("nan"))
+    with pytest.raises(ValidationError, match="finite"):
+        EngineConfig(default_timeout_seconds=float("inf"))
+    with pytest.raises(ValidationError, match="finite"):
+        EngineConfig(default_timeout_seconds=float("-inf"))
+
+
+def test_case_document_timeout_must_be_finite() -> None:
+    with pytest.raises(ValidationError, match="finite"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "timeout_seconds": float("inf"),
+            }
+        )
+
+
+def test_param_overlay_timeout_must_be_finite() -> None:
+    with pytest.raises(ValidationError, match="finite"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "params": [{"id": "x", "timeout_seconds": float("nan")}],
+            }
+        )
+
+
+def test_normalize_command_name_strips_exe_and_rejects_paths() -> None:
+    assert normalize_command_name("IPCONFIG.EXE") == "ipconfig"
+    assert normalize_command_name("My-Tool") == "my-tool"
+    with pytest.raises(ValueError, match="invalid command name"):
+        normalize_command_name("../evil")
+    with pytest.raises(ValueError, match="invalid command name"):
+        normalize_command_name("foo/bar")
+    with pytest.raises(ValueError, match="invalid command name"):
+        normalize_command_name("foo\\bar")
+    with pytest.raises(ValueError, match="reserved"):
+        normalize_command_name("NUL")
+    with pytest.raises(ValueError, match="reserved"):
+        normalize_command_name("con.exe")
+
+
+def test_mock_path_and_reserved_names_are_schema_errors() -> None:
+    with pytest.raises(ValidationError, match="invalid command name"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "mocks": {"../evil": {"exit_code": 0}},
+            }
+        )
+    with pytest.raises(ValidationError, match="reserved"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "mocks": {"con": {"exit_code": 0}},
+            }
+        )
+
+
+def test_allow_path_name_is_schema_error() -> None:
+    with pytest.raises(ValidationError, match="invalid command name"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "allow": ["../format"],
+            }
+        )
+
+
+def test_mock_exe_suffix_collapses_to_stem() -> None:
+    document = CaseDocument.model_validate(
+        {
+            "description": "t",
+            "expect": {"exit_code": 0},
+            "mocks": {"ipconfig.exe": {"exit_code": 3}},
+        }
+    )
+    assert "ipconfig" in document.mocks
+    assert "ipconfig.exe" not in document.mocks
+    assert document.mocks["ipconfig"].exit_code == 3
+    with pytest.raises(ValidationError, match="duplicate mock"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "expect": {"exit_code": 0},
+                "mocks": {
+                    "ipconfig": {"exit_code": 0},
+                    "ipconfig.exe": {"exit_code": 1},
+                },
+            }
+        )
+
+
+def test_overlay_allow_rejects_path_and_normalizes_exe() -> None:
+    overlay = ParamOverlay(id="x", allow=["FORMAT.EXE"])
+    assert overlay.allow == ["format"]
+    omitted = ParamOverlay(id="x", allow=None)
+    assert omitted.allow is None
+    with pytest.raises(ValidationError, match="invalid command name"):
+        ParamOverlay(id="x", allow=["../format"])
+
+
+def test_engine_config_jobs_must_be_in_range() -> None:
+    with pytest.raises(ValidationError):
+        EngineConfig(jobs=0)
+    with pytest.raises(ValidationError):
+        EngineConfig(jobs=MAX_JOBS + 1)
+    assert EngineConfig(jobs=MAX_JOBS).jobs == MAX_JOBS

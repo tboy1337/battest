@@ -17,7 +17,10 @@ mocks:
 ```
 
 battest copies a small native stub as `ipconfig.exe` (not `.cmd`) into a temp
-directory and prepends that directory to `PATH`. Using `.exe` matters: a batch
+directory and prepends that directory to `PATH`. Mock keys are executable stems:
+`ipconfig.exe` is treated as `ipconfig`. Path separators and Windows reserved
+device names (`nul`, `con`, `prn`, `com1`–`com9`, `lpt1`–`lpt9`) are schema
+errors so a fixture cannot write stub files outside the mock directory. Using `.exe` matters: a batch
 script that runs `ipconfig` without `CALL` never returns if the shadow is a
 `.cmd` file. Sidecar files (`ipconfig.stdout`, `ipconfig.stderr`,
 `ipconfig.exit`) supply canned output and the exit code. When call recording

@@ -13,7 +13,7 @@ from battest.constants import (
     SAFE_DEFAULT_COMMANDS,
 )
 from battest.logging_config import get_logger
-from battest.models import MockSpec
+from battest.models import MockSpec, normalize_command_name
 from battest.spec import load_catalog, packaged_data_path
 
 LOGGER = get_logger("mocks")
@@ -85,6 +85,22 @@ def effective_mocks(
     return merged
 
 
+def _confined_mock_path(mock_dir: Path, command: str, filename: str) -> Path:
+    """Join filename under mock_dir and reject path separators or escapes."""
+    if Path(filename).name != filename:
+        LOGGER.error("mock artifact %r is not a plain file name", filename)
+        raise MockError(f"mock artifact {filename!r} is not a plain file name")
+    path = (mock_dir / filename).resolve()
+    try:
+        path.relative_to(mock_dir.resolve())
+    except ValueError as exc:
+        LOGGER.error("mock command %r escapes mock directory", command)
+        raise MockError(
+            f"mock command {command!r} would write outside the mock directory"
+        ) from exc
+    return path
+
+
 def write_mock_tree(root: Path, mocks: dict[str, MockSpec]) -> Path:
     """Copy exe stubs and sidecar files into root; return the mock directory."""
     mock_dir = root / MOCK_DIR_NAME
@@ -93,19 +109,30 @@ def write_mock_tree(root: Path, mocks: dict[str, MockSpec]) -> Path:
     catalog = load_catalog()
     source_exe = stub_executable()
     for name, spec in mocks.items():
-        lowered = name.lower()
+        try:
+            lowered = normalize_command_name(name)
+        except ValueError as exc:
+            raise MockError(str(exc)) from exc
         if catalog.is_internal(lowered):
             LOGGER.warning("refusing to PATH-mock internal command %s", lowered)
             continue
-        stub_path = mock_dir / f"{lowered}.exe"
+        stub_path = _confined_mock_path(mock_dir, lowered, f"{lowered}.exe")
         shutil.copyfile(source_exe, stub_path)
-        (mock_dir / f"{lowered}.exit").write_text(str(spec.exit_code), encoding="utf-8")
+        _confined_mock_path(mock_dir, lowered, f"{lowered}.exit").write_text(
+            str(spec.exit_code), encoding="utf-8"
+        )
         if spec.record_calls:
-            (call_dir / f"{lowered}.log").write_text("", encoding="utf-8")
+            _confined_mock_path(call_dir, lowered, f"{lowered}.log").write_text(
+                "", encoding="utf-8"
+            )
         if spec.stdout:
-            (mock_dir / f"{lowered}.stdout").write_text(spec.stdout, encoding="utf-8")
+            _confined_mock_path(mock_dir, lowered, f"{lowered}.stdout").write_text(
+                spec.stdout, encoding="utf-8"
+            )
         if spec.stderr:
-            (mock_dir / f"{lowered}.stderr").write_text(spec.stderr, encoding="utf-8")
+            _confined_mock_path(mock_dir, lowered, f"{lowered}.stderr").write_text(
+                spec.stderr, encoding="utf-8"
+            )
         LOGGER.debug(
             "wrote mock stub %s exit=%s stdout_len=%s stderr_len=%s",
             stub_path,

@@ -18,9 +18,10 @@
     "setup": { "type": "string" },
     "teardown": { "type": "string" },
     "copy": { "type": "array", "items": { "type": "string" } },
-    "allow": { "type": "array", "items": { "type": "string" } },
+    "allow": { "type": "array", "items": { "$ref": "#/$defs/commandName" } },
     "mocks": {
       "type": "object",
+      "propertyNames": { "$ref": "#/$defs/commandName" },
       "additionalProperties": { "$ref": "#/$defs/mockSpec" }
     },
     "expect": { "$ref": "#/$defs/expect" },
@@ -30,6 +31,12 @@
     }
   },
   "$defs": {
+    "commandName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 63,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+    },
     "newlineMode": { "type": "string", "enum": ["auto", "crlf", "lf"] },
     "outputMatcher": {
       "type": "object",
@@ -183,11 +190,12 @@
         },
         "mocks": {
           "type": "object",
+          "propertyNames": { "$ref": "#/$defs/commandName" },
           "additionalProperties": { "$ref": "#/$defs/mockSpec" }
         },
         "expect": { "$ref": "#/$defs/expect" },
         "timeout_seconds": { "type": "number", "exclusiveMinimum": 0 },
-        "allow": { "type": "array", "items": { "type": "string" } }
+        "allow": { "type": "array", "items": { "$ref": "#/$defs/commandName" } }
       }
     }
   }

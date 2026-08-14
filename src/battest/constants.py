@@ -51,5 +51,20 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_DIFF = 2000
 KILL_DRAIN_TIMEOUT_SECONDS = 5.0
 TEARDOWN_MIN_SECONDS = 5.0
+MAX_JOBS = 256
+COMMAND_NAME_MAX_LENGTH = 63
 VALID_MODIFIER_CHARS = "nxfpdstaz"
+WINDOWS_RESERVED_DEVICE_NAMES: frozenset[str] = frozenset(
+    {
+        "aux",
+        "clock$",
+        "con",
+        "conin$",
+        "conout$",
+        "nul",
+        "prn",
+        *(f"com{index}" for index in range(1, 10)),
+        *(f"lpt{index}" for index in range(1, 10)),
+    }
+)
 PERCENT_TILDE_PATTERN = r"%~([A-Za-z$]*)(\d|\*)"

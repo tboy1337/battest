@@ -108,6 +108,11 @@ def test_packaged_data_path_survives_as_file_cleanup(
         assert path.read_text(encoding="utf-8") == "ok: 1\n"
         cached = packaged_data_path("gone.yaml")
         assert cached == path
+        ephemeral.write_text("ok: 1\n", encoding="utf-8")
+        second = packaged_data_path("other.yaml")
+        assert second.parent == path.parent
+        assert second.name == "other.yaml"
+        assert second.read_text(encoding="utf-8") == "ok: 1\n"
     finally:
         created = spec_mod._EXTRACT_ROOT
         spec_mod._EXTRACT_ROOT = previous_root

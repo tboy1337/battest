@@ -11,8 +11,8 @@ battest [--version] run [path] [--junit-xml FILE] [--jobs N]
 | `path` | Fixture file or directory. Default: `./tests` or cwd |
 | `--version` | Print the battest version and exit |
 | `--junit-xml` | Write xunit2 JUnit XML. When this flag is set, usage, schema, empty-discovery, and engine errors (exit 2) still write a one-testcase error suite named `battest` |
-| `--jobs` | Parallel case execution (each case has its own temp dir). Must be >= 1 |
-| `--timeout` | Default timeout when a case omits `timeout_seconds`. Must be positive |
+| `--jobs` | Parallel case execution (each case has its own temp dir). Must be between 1 and 256 inclusive |
+| `--timeout` | Default timeout when a case omits `timeout_seconds`. Must be a finite number greater than 0 (`nan` and `inf` are rejected) |
 | `--max-diff` | Truncate failure diffs and captured expected/actual text to this many characters. Must be >= 1 |
 | `--safe-defaults` | PATH-stub `format`, `shutdown`, `reg`, `diskpart`, `bcdedit`, `cipher`, `netsh`, `takeown`, `wmic` unless mocked or listed in `allow` |
 | `--no-safe-defaults` | Disable those automatic stubs (CLI default) |

@@ -10,10 +10,11 @@ import time
 import pytest
 from pytest_mock import MockerFixture
 
-from battest.constants import TEARDOWN_MIN_SECONDS
+from battest.constants import TEARDOWN_MIN_SECONDS, WRAPPER_NAME
 from battest.encoding import console_encoding, decode_output
 from battest.engine import (
     EngineError,
+    _close_process_streams,
     _combined_env,
     _prepare_work_dir,
     _run_process,
@@ -21,6 +22,7 @@ from battest.engine import (
     _seed_work_dir,
     abandon_lingering_process,
     build_cmd_line,
+    build_wrapper_text,
     cmd_executable,
     collapse_path_keys,
     drain_after_timeout,
@@ -31,6 +33,7 @@ from battest.engine import (
     require_windows,
     resolved_timeout,
     teardown_timeout,
+    wrapper_sut_relative,
 )
 from battest.mocks import MockError
 from battest.models import (
@@ -248,6 +251,8 @@ def test_combined_env_prefixes_mock_and_collapses_path(
     assert value.startswith(str(mock_dir))
     assert "C:\\custom" in value
     assert env["NoDefaultCurrentDirectoryInEXEPath"] == "1"
+    assert "BATTEST_SUT" not in env
+    assert "BATTEST_ENVFILE" not in env
 
 
 def test_kill_process_tree_invokes_taskkill(mocker: MockerFixture) -> None:
@@ -763,7 +768,12 @@ def test_prepare_work_dir_copies_script_setup_teardown(tmp_path: Path) -> None:
     copied_script = work / "run.cmd"
     assert copied_script.is_file()
     assert copied_script.resolve() != script.resolve()
-    assert prepared.env["BATTEST_SUT"] == str(copied_script)
+    assert "BATTEST_SUT" not in prepared.env
+    assert "BATTEST_ENVFILE" not in prepared.env
+    wrapper_text = (work / WRAPPER_NAME).read_text(encoding="utf-8")
+    assert "%~dp0run.cmd" in wrapper_text
+    assert "_bt_env" not in wrapper_text
+    assert "_bt_sut" not in wrapper_text
     assert (work / "setup.cmd").is_file()
     assert (work / "teardown.cmd").is_file()
 
@@ -1348,3 +1358,80 @@ def test_engine_hides_battest_helper_env_from_sut(tmp_path: Path) -> None:
     result = execute_case(case, EngineConfig())
     assert result.outcome == Outcome.PASS
     assert "run.cmd" not in result.stdout
+
+
+@pytest.mark.windows
+def test_engine_sut_cannot_redirect_env_dump(tmp_path: Path) -> None:
+    outside = tmp_path / "pwned-env.txt"
+    case = _write_case(
+        tmp_path,
+        "\r\n".join(
+            [
+                "@echo off",
+                f'set "_bt_env={outside}"',
+                "set MARKER=ok",
+                "exit /b 0",
+                "",
+            ]
+        ),
+        "\n".join(
+            [
+                "description: env dump must stay in workdir",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+                "  env:",
+                "    MARKER: ok",
+            ]
+        ),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.PASS
+    assert not outside.exists()
+    assert result.env.get("MARKER") == "ok"
+
+
+def test_build_wrapper_text_uses_dp0() -> None:
+    text = build_wrapper_text("sub\\run.cmd")
+    assert "%~dp0sub\\run.cmd" in text
+    assert "%~dp0_battest_env.txt" in text
+    assert "BATTEST_RC" in text
+    assert "_bt_env" not in text
+
+
+def test_wrapper_sut_relative_rejects_unsafe_names(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    sut = work / "run.cmd"
+    sut.write_text("@echo off\n", encoding="utf-8")
+    assert wrapper_sut_relative(work, sut) == "run.cmd"
+    nested = work / "sub"
+    nested.mkdir()
+    nested_sut = nested / "run.cmd"
+    nested_sut.write_text("@echo off\n", encoding="utf-8")
+    relative = wrapper_sut_relative(work, nested_sut)
+    assert "sub" in relative
+    assert "run.cmd" in relative
+    with pytest.raises(ValueError, match="escapes"):
+        wrapper_sut_relative(work, tmp_path / "outside.cmd")
+    with pytest.raises(ValueError, match="not safe"):
+        wrapper_sut_relative(work, work / 'a"b.cmd')
+    percent = work / "a%b.cmd"
+    percent.write_text("@echo off\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not safe"):
+        wrapper_sut_relative(work, percent)
+
+
+def test_close_process_streams_oserror(caplog: pytest.LogCaptureFixture) -> None:
+    class BoomStream:
+        def close(self) -> None:
+            raise OSError("already closed")
+
+    class Proc:
+        stdin = BoomStream()
+        stdout = BoomStream()
+        stderr = None
+
+    with caplog.at_level("DEBUG", logger="battest.engine"):
+        _close_process_streams(Proc())
+    assert "failed to close process stream" in caplog.text

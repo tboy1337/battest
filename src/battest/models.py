@@ -3,11 +3,42 @@
 from __future__ import annotations
 
 from enum import Enum
+import math
 from pathlib import Path
 import re
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+from battest.constants import (
+    COMMAND_NAME_MAX_LENGTH,
+    MAX_JOBS,
+    WINDOWS_RESERVED_DEVICE_NAMES,
+)
+from battest.logging_config import get_logger
+
+LOGGER = get_logger("models")
+_COMMAND_EXTENSIONS = (".exe", ".cmd", ".bat", ".com")
+_COMMAND_NAME_RE = re.compile(
+    rf"^[a-z0-9](?:[a-z0-9._-]{{0,{COMMAND_NAME_MAX_LENGTH - 2}}}[a-z0-9])?$"
+)
+
+
+def require_finite_positive(value: float) -> float:
+    """Reject NaN and inf so timeouts cannot hang or crash the runner."""
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("must be a finite number greater than 0")
+    return value
+
+
+FinitePositiveFloat = Annotated[float, AfterValidator(require_finite_positive)]
 
 
 class NewlineMode(str, Enum):
@@ -230,8 +261,18 @@ class ParamOverlay(BaseModel):
     env: dict[str, str] | None = None
     mocks: dict[str, MockSpec] | None = None
     expect: Expect | None = None
-    timeout_seconds: float | None = Field(default=None, gt=0)
+    timeout_seconds: FinitePositiveFloat | None = None
     allow: list[str] | None = None
+
+    @field_validator("allow")
+    @classmethod
+    def overlay_allow_names_must_be_safe(
+        cls, value: list[str] | None
+    ) -> list[str] | None:
+        """Normalize overlay allow entries to safe command stems."""
+        if value is None:
+            return None
+        return [normalize_command_name(item) for item in value]
 
     @field_validator("id")
     @classmethod
@@ -269,7 +310,7 @@ class CaseDocument(BaseModel):
     args: list[str] = Field(default_factory=list)
     stdin: str = ""
     env: dict[str, str] = Field(default_factory=dict)
-    timeout_seconds: float | None = Field(default=None, gt=0)
+    timeout_seconds: FinitePositiveFloat | None = None
     setup: str | None = None
     teardown: str | None = None
     mocks: dict[str, MockSpec] = Field(default_factory=dict)
@@ -277,6 +318,12 @@ class CaseDocument(BaseModel):
     params: list[ParamOverlay] = Field(default_factory=list)
     allow: list[str] = Field(default_factory=list)
     copy_files: list[str] = Field(default_factory=list, alias="copy")
+
+    @field_validator("allow")
+    @classmethod
+    def document_allow_names_must_be_safe(cls, value: list[str]) -> list[str]:
+        """Normalize allow entries to safe command stems."""
+        return [normalize_command_name(item) for item in value]
 
     @field_validator("description")
     @classmethod
@@ -312,7 +359,7 @@ class Case(BaseModel):
     args: list[str] = Field(default_factory=list)
     stdin: str = ""
     env: dict[str, str] = Field(default_factory=dict)
-    timeout_seconds: float | None = Field(default=None, gt=0)
+    timeout_seconds: FinitePositiveFloat | None = None
     setup_path: Path | None = None
     teardown_path: Path | None = None
     mocks: dict[str, MockSpec] = Field(default_factory=dict)
@@ -360,15 +407,37 @@ class EngineConfig(BaseModel):
 
     safe_defaults: bool = False
     max_diff: int = Field(default=2000, ge=1)
-    jobs: int = Field(default=1, ge=1)
-    default_timeout_seconds: float = Field(default=30.0, gt=0)
+    jobs: int = Field(default=1, ge=1, le=MAX_JOBS)
+    default_timeout_seconds: FinitePositiveFloat = 30.0
+
+
+def normalize_command_name(name: str) -> str:
+    """Return a lowercase executable stem, rejecting paths and reserved devices."""
+    stripped = name.strip()
+    lowered = stripped.lower()
+    for suffix in _COMMAND_EXTENSIONS:
+        if lowered.endswith(suffix) and len(lowered) > len(suffix):
+            lowered = lowered[: -len(suffix)]
+            break
+    if not _COMMAND_NAME_RE.fullmatch(lowered):
+        LOGGER.warning("rejecting invalid command name %r", name)
+        raise ValueError(
+            f"invalid command name {name!r}; use a simple executable stem "
+            "(letters, digits, dot, underscore, hyphen; no path separators)"
+        )
+    device = lowered.split(".", 1)[0]
+    if device in WINDOWS_RESERVED_DEVICE_NAMES:
+        LOGGER.warning("rejecting reserved Windows device name %r", name)
+        raise ValueError(f"command name {name!r} is a reserved Windows device name")
+    LOGGER.debug("normalized command name %r -> %s", name, lowered)
+    return lowered
 
 
 def lowercase_mock_mapping(value: dict[str, MockSpec]) -> dict[str, MockSpec]:
-    """Lowercase mock command names and reject case-insensitive duplicates."""
+    """Normalize mock command names and reject case-insensitive duplicates."""
     lowered: dict[str, MockSpec] = {}
     for name, spec in value.items():
-        key = name.lower()
+        key = normalize_command_name(name)
         if key in lowered:
             raise ValueError(f"duplicate mock command name {name!r} (case-insensitive)")
         lowered[key] = spec
