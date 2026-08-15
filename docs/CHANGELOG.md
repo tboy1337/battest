@@ -25,6 +25,9 @@ fail-loud fixture loading.
   targets, and `/flag` forms such as `del /f /q C:\Windows\Temp\x.txt`.
 - The uninstaller kill helper is kept in parity with
   `scripts/installer_ps/Stop-BattestInstalledProcess.ps1`.
+- Stub CLI tests fsync the copied helper and retry `ETXTBSY` on exec as well
+  as copy, so `cargo llvm-cov` on Linux overlayfs does not fail with
+  "Text file busy".
 - CI and Action docs continue to pin GitHub Actions to version tags,
   not commit SHAs.
 

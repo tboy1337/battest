@@ -51,13 +51,39 @@ fn stub_binary() -> PathBuf {
     candidate
 }
 
+const ETXTBSY_ATTEMPTS: u32 = 8;
+
 fn is_etxtbsy(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::ExecutableFileBusy || err.raw_os_error() == Some(26)
+}
+
+fn retry_etxtbsy<T, F>(mut op: F) -> io::Result<T>
+where
+    F: FnMut() -> io::Result<T>,
+{
+    let mut last_err: Option<io::Error> = None;
+    for attempt in 0..ETXTBSY_ATTEMPTS {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(err) if is_etxtbsy(&err) => {
+                last_err = Some(err);
+                if attempt + 1 < ETXTBSY_ATTEMPTS {
+                    std::thread::sleep(Duration::from_millis(
+                        50 * u64::from(attempt + 1),
+                    ));
+                }
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| io::Error::from_raw_os_error(26)))
 }
 
 fn copy_stub_once(src: &Path, tmp: &Path, dest: &Path) -> io::Result<()> {
     let _ = fs::remove_file(tmp);
     fs::copy(src, tmp)?;
+    #[cfg(unix)]
+    fsync_path(tmp)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -67,27 +93,21 @@ fn copy_stub_once(src: &Path, tmp: &Path, dest: &Path) -> io::Result<()> {
     }
     let _ = fs::remove_file(dest);
     fs::rename(tmp, dest)?;
+    #[cfg(unix)]
+    fsync_path(dest)?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn fsync_path(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
 }
 
 fn copy_stub_with_retry(src: &Path, dest: &Path) {
     let tmp = dest.with_extension("exe.part");
-    let mut last_err: Option<io::Error> = None;
-    for attempt in 0..8 {
-        match copy_stub_once(src, &tmp, dest) {
-            Ok(()) => return,
-            Err(err) if is_etxtbsy(&err) => {
-                last_err = Some(err);
-                std::thread::sleep(Duration::from_millis(50 * (attempt + 1)));
-            }
-            Err(err) => panic!("copy stub to {}: {err}", dest.display()),
-        }
-    }
-    panic!(
-        "copy stub to {} still busy: {}",
-        dest.display(),
-        last_err.map(|err| err.to_string()).unwrap_or_default()
-    );
+    retry_etxtbsy(|| copy_stub_once(src, &tmp, dest)).unwrap_or_else(|err| {
+        panic!("copy stub to {}: {err}", dest.display());
+    });
 }
 
 fn install_named_stub(dir: &Path, name: &str) -> PathBuf {
@@ -97,10 +117,9 @@ fn install_named_stub(dir: &Path, name: &str) -> PathBuf {
 }
 
 fn run_stub(exe: &Path, args: &[&str]) -> std::process::Output {
-    Command::new(exe)
-        .args(args)
-        .output()
-        .unwrap_or_else(|err| panic!("failed to run {}: {err}", exe.display()))
+    retry_etxtbsy(|| Command::new(exe).args(args).output()).unwrap_or_else(|err| {
+        panic!("failed to run {}: {err}", exe.display());
+    })
 }
 
 #[test]
@@ -196,4 +215,31 @@ fn pipes_binary_stdout_without_utf8() {
     let output = run_stub(&exe, &["--raw"]);
     assert_eq!(output.stdout, [0xff, 0xfe, b'x']);
     remove_temp_dir(&dir);
+}
+
+#[test]
+fn retries_etxtbsy_then_succeeds() {
+    let mut attempts = 0;
+    let result = retry_etxtbsy(|| {
+        attempts += 1;
+        if attempts < 3 {
+            Err(io::Error::from_raw_os_error(26))
+        } else {
+            Ok(7)
+        }
+    });
+    assert_eq!(result.expect("retry should succeed"), 7);
+    assert_eq!(attempts, 3);
+}
+
+#[test]
+fn etxtbsy_retry_propagates_other_errors_immediately() {
+    let mut attempts = 0;
+    let result: io::Result<()> = retry_etxtbsy(|| {
+        attempts += 1;
+        Err(io::Error::new(io::ErrorKind::NotFound, "missing"))
+    });
+    assert_eq!(attempts, 1);
+    let err = result.expect_err("non-busy errors must not retry");
+    assert_eq!(err.kind(), io::ErrorKind::NotFound);
 }
