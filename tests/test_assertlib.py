@@ -351,8 +351,9 @@ def test_match_files_rejects_path_escape(tmp_path: Path) -> None:
     secret.write_text("classified", encoding="utf-8")
     work = tmp_path / "work"
     work.mkdir()
+    matcher = FileMatcher.model_construct(path="../secret.txt", exists=True)
     failures = match_files(
-        [FileMatcher(path="../secret.txt", exists=True)],
+        [matcher],
         work,
         tmp_path,
         200,

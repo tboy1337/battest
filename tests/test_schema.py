@@ -26,6 +26,8 @@ from battest.models import (
     merge_expect,
     merge_mocks,
     normalize_command_name,
+    path_has_parent_segment,
+    path_has_reserved_device,
 )
 from battest.schema import (
     SchemaError,
@@ -57,12 +59,28 @@ def test_schema_payload_is_object() -> None:
     reserved = payload["$defs"]["commandName"]["not"]["pattern"]
     assert "nul" in reserved
     assert "con" in reserved
+    assert "clock" in reserved
+    assert "conin" in reserved
+    assert "conout" in reserved
     assert (
         payload["$defs"]["outputMatcher"]["properties"]["regex"]["maxLength"]
         == MAX_REGEX_PATTERN_LENGTH
     )
-    path_pattern = payload["$defs"]["fileMatcher"]["properties"]["path"]["pattern"]
+    path_pattern = payload["$defs"]["fileMatcher"]["properties"]["path"]["allOf"][1][
+        "pattern"
+    ]
     assert "[A-Za-z]:" in path_pattern
+    assert r"\.\." in path_pattern
+    relative = payload["$defs"]["relativeFixturePath"]
+    assert payload["properties"]["script"]["$ref"].endswith("relativeFixturePath")
+    assert payload["properties"]["setup"]["$ref"].endswith("relativeFixturePath")
+    assert payload["properties"]["copy"]["items"]["$ref"].endswith("relativeFixturePath")
+    reserved_path = str(relative["not"])
+    assert "[Nn][Uu][Ll]" in reserved_path
+    assert "[Cc][Oo][Nn]" in reserved_path
+    file_props = payload["$defs"]["fileMatcher"]["properties"]
+    assert "equals" in file_props
+    assert file_props["equals_file"]["$ref"].endswith("relativeFixturePath")
     exit_schema = payload["$defs"]["mockSpec"]["properties"]["exit_code"]
     assert exit_schema["minimum"] == 0
     assert exit_schema["maximum"] == 255
@@ -1075,6 +1093,45 @@ def test_normalize_command_name_strips_exe_and_rejects_paths() -> None:
         normalize_command_name("NUL")
     with pytest.raises(ValueError, match="reserved"):
         normalize_command_name("con.exe")
+    with pytest.raises(ValueError, match="invalid command name"):
+        normalize_command_name("clock$")
+    with pytest.raises(ValueError, match="reserved"):
+        normalize_command_name("con.txt")
+
+
+def test_file_matcher_rejects_parent_segment_and_reserved_devices() -> None:
+    assert path_has_parent_segment("../secret.txt")
+    assert path_has_parent_segment("foo\\..\\bar.txt")
+    assert not path_has_parent_segment("out.txt")
+    assert path_has_reserved_device("nul")
+    assert path_has_reserved_device("subdir/con.txt")
+    assert path_has_reserved_device("AUX")
+    assert path_has_reserved_device("clock$")
+    assert not path_has_reserved_device("out.txt")
+    with pytest.raises(ValidationError, match=r"\.\."):
+        FileMatcher(path="../secret.txt", exists=True)
+    with pytest.raises(ValidationError, match="reserved"):
+        FileMatcher(path="nul", exists=True)
+    with pytest.raises(ValidationError, match="reserved"):
+        FileMatcher(path="logs/con.txt", exists=True)
+    with pytest.raises(ValidationError, match="reserved"):
+        OutputMatcher(equals_file="nul.txt")
+    with pytest.raises(ValidationError, match="reserved"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "script": "nul",
+                "expect": {"exit_code": 0},
+            }
+        )
+    with pytest.raises(ValidationError, match="reserved"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "copy": ["aux.log"],
+                "expect": {"exit_code": 0},
+            }
+        )
 
 
 def test_mock_path_and_reserved_names_are_schema_errors() -> None:

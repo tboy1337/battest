@@ -361,7 +361,14 @@ def test_read_git_project_version_from_head(
 ) -> None:
     module = _load_script("read_git_pyproject_version.py")
     version = module.read_git_project_version("HEAD")
-    assert version == get_version()
+    git_toml = tomllib.loads(
+        subprocess.check_output(
+            ["git", "show", "HEAD:pyproject.toml"],
+            cwd=REPO_ROOT,
+            text=True,
+        )
+    )
+    assert version == git_toml["project"]["version"]
     module.main(["HEAD"])
     captured = capsys.readouterr()
     assert captured.out.strip() == version
@@ -371,6 +378,30 @@ def test_changelog_documents_current_version() -> None:
     version = get_version()
     changelog = (REPO_ROOT / "docs" / "CHANGELOG.md").read_text(encoding="utf-8")
     assert f"## [{version}]" in changelog
+    assert (
+        f"[{version}]: https://github.com/tboy1337/battest/releases/tag/v{version}"
+        in changelog
+    )
+
+
+def test_installer_verifies_github_asset_digest() -> None:
+    installer = (REPO_ROOT / "scripts" / "install_battest.cmd").read_text(
+        encoding="utf-8"
+    )
+    assert "BATTEST_DIGEST" in installer
+    assert "write_hash_script" in installer
+    assert "sha256:" in installer
+    release = (
+        REPO_ROOT / "scripts" / "installer_ps" / "Get-LatestBattestRelease.ps1"
+    ).read_text(encoding="utf-8")
+    assert "battest-installer" in release
+    assert "Tls12" in release
+    assert "digest" in release
+    hasher = (
+        REPO_ROOT / "scripts" / "installer_ps" / "Test-BattestArchiveHash.ps1"
+    ).read_text(encoding="utf-8")
+    assert "Get-FileHash" in hasher
+    assert "SHA256" in hasher
 
 
 def test_dev_requirements_match_pyproject_extra() -> None:

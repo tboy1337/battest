@@ -136,7 +136,7 @@ echo.
 set "PS_REMOVE_PATH=%BATTEST_TEMP%_remove_path.ps1"
 call :write_remove_path_script
 powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_REMOVE_PATH!" 2>&1
-if %errorlevel% neq 0 (
+if !errorlevel! neq 0 (
     echo WARNING: Failed to remove battest from User PATH.
     echo You may need to manually remove it from your environment variables.
     echo.

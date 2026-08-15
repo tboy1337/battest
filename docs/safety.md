@@ -11,7 +11,8 @@ Mitigations that **are** included:
 - `cmd.exe /d` so AutoRun is disabled
 - Fixture `script`, `setup`, `teardown`, `copy`, and `equals_file` paths must
   stay under the fixture directory (absolute, drive-relative, and UNC paths
-  are rejected)
+  are rejected). Those paths, and `files[].path`, cannot name reserved Windows
+  devices such as `nul` or `con`. `files[].path` also cannot contain `..`.
 - Optional `--safe-defaults` PATH stubs for `format`, `shutdown`, `reg`,
   `diskpart`, `bcdedit`, `cipher`, `netsh`, `takeown`, and `wmic`. This is a
   deny list of common destructive externals, not a sandbox. The CLI default is

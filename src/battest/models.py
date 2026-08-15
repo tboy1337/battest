@@ -50,6 +50,40 @@ def is_rooted_path(value: str) -> bool:
     return len(stripped) >= 2 and stripped[1] == ":" and stripped[0].isalpha()
 
 
+def _posix_path_parts(value: str) -> tuple[str, ...]:
+    """Split a user-supplied path on slashes without resolving ``..``."""
+    return Path(value.replace("\\", "/")).parts
+
+
+def reserved_device_stem(component: str) -> str:
+    """Return the Windows device stem of one path component."""
+    stripped = component.strip().rstrip(". ")
+    return stripped.lower().split(".", 1)[0]
+
+
+def path_has_reserved_device(value: str) -> bool:
+    """Return True when any path component is a reserved Windows device name."""
+    for part in _posix_path_parts(value):
+        if part in {"/", ""}:
+            continue
+        if reserved_device_stem(part) in WINDOWS_RESERVED_DEVICE_NAMES:
+            LOGGER.warning("path %r uses reserved Windows device %r", value, part)
+            return True
+    return False
+
+
+def path_has_parent_segment(value: str) -> bool:
+    """Return True when the relative path contains a ``..`` segment."""
+    return ".." in _posix_path_parts(value)
+
+
+def require_no_reserved_device(value: str, label: str) -> str:
+    """Reject paths that would open a reserved Windows device such as NUL."""
+    if path_has_reserved_device(value):
+        raise ValueError(f"{label} cannot use a reserved Windows device name")
+    return value
+
+
 FinitePositiveFloat = Annotated[float, AfterValidator(require_finite_positive)]
 
 
@@ -81,6 +115,14 @@ class OutputMatcher(BaseModel):
     regex: str | None = None
     empty: bool | None = None
     newline: NewlineMode = NewlineMode.AUTO
+
+    @field_validator("equals_file")
+    @classmethod
+    def equals_file_rejects_reserved_devices(cls, value: str | None) -> str | None:
+        """Reject equals_file paths that name a reserved Windows device."""
+        if value is None:
+            return None
+        return require_no_reserved_device(value, "equals_file")
 
     @field_validator("regex")
     @classmethod
@@ -139,16 +181,27 @@ class FileMatcher(BaseModel):
     equals: str | None = None
     equals_file: str | None = Field(default=None, min_length=1)
 
+    @field_validator("equals_file")
+    @classmethod
+    def file_equals_file_rejects_reserved_devices(cls, value: str | None) -> str | None:
+        """Reject equals_file paths that name a reserved Windows device."""
+        if value is None:
+            return None
+        return require_no_reserved_device(value, "equals_file")
+
     @field_validator("path")
     @classmethod
     def path_must_be_relative(cls, value: str) -> str:
-        """Reject absolute file matcher paths; they must stay under the work dir."""
+        """Reject absolute, escaping, or reserved-device file matcher paths."""
         if is_rooted_path(value):
             LOGGER.warning("rejecting rooted file matcher path %r", value)
             raise ValueError(
                 "file matcher path must be relative to the isolated work directory"
             )
-        return value
+        if path_has_parent_segment(value):
+            LOGGER.warning("rejecting file matcher path with parent segment %r", value)
+            raise ValueError("file matcher path cannot contain '..'")
+        return require_no_reserved_device(value, "file matcher path")
 
     @model_validator(mode="after")
     def reject_conflicting_existence(self) -> FileMatcher:
@@ -364,6 +417,20 @@ class CaseDocument(BaseModel):
     def document_allow_names_must_be_safe(cls, value: list[str]) -> list[str]:
         """Normalize allow entries to safe command stems."""
         return [normalize_command_name(item) for item in value]
+
+    @field_validator("script", "setup", "teardown")
+    @classmethod
+    def document_paths_reject_reserved_devices(cls, value: str | None) -> str | None:
+        """Reject script/setup/teardown paths that name a reserved Windows device."""
+        if value is None:
+            return None
+        return require_no_reserved_device(value, "path")
+
+    @field_validator("copy_files")
+    @classmethod
+    def copy_paths_reject_reserved_devices(cls, value: list[str]) -> list[str]:
+        """Reject copy entries that name a reserved Windows device."""
+        return [require_no_reserved_device(item, "copy") for item in value]
 
     @field_validator("description")
     @classmethod

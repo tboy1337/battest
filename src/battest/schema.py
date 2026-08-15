@@ -20,6 +20,7 @@ from battest.models import (
     is_rooted_path,
     merge_expect,
     merge_mocks,
+    path_has_reserved_device,
 )
 from battest.spec import load_catalog
 
@@ -71,6 +72,10 @@ def parse_document(payload: Mapping[str, Any], source: Path) -> CaseDocument:
 
 def _confine_to_fixture(base_dir: Path, value: str, source: Path, label: str) -> Path:
     """Resolve value under base_dir and reject absolute or escaping paths."""
+    if path_has_reserved_device(value):
+        raise SchemaError(
+            f"{label} path uses a reserved Windows device name for {source}: {value}"
+        )
     if is_rooted_path(value):
         raise SchemaError(
             f"{label} path escapes fixture directory for {source}: {value}"

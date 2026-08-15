@@ -33,7 +33,8 @@ curl -L https://raw.githubusercontent.com/tboy1337/battest/main/scripts/install_
 ```
 
 This installs the latest `battest.exe` to `%LOCALAPPDATA%\Programs\battest\bin`,
-adds it to your user `PATH`, and handles updates automatically. Restart your
+adds it to your user `PATH`, and handles updates automatically. The installer
+verifies the GitHub release-asset SHA-256 digest before extract. Restart your
 terminal or IDE after installation for `PATH` changes to take effect.
 
 **Manual zip download (fallback):**

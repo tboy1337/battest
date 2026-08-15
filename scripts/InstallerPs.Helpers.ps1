@@ -12,6 +12,10 @@ function Get-InstallerPsScriptMap {
                 Fixture      = 'Get-DownloadedFileSize.ps1'
                 Placeholders = @{ '%BATTEST_TEMP%' = '__BATTEST_TEMP__' }
             }
+            'write_hash_script'        = @{
+                Fixture      = 'Test-BattestArchiveHash.ps1'
+                Placeholders = @{ '%BATTEST_TEMP%' = '__BATTEST_TEMP__' }
+            }
             'write_expand_script'      = @{
                 Fixture      = 'Expand-BattestArchive.ps1'
                 Placeholders = @{ '%BATTEST_TEMP%' = '__BATTEST_TEMP__' }

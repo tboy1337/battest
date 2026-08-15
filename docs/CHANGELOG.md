@@ -5,6 +5,22 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-15
+
+Production audit: installer integrity and Windows device path confinement.
+
+- The standalone installer verifies the GitHub release-asset SHA-256 digest
+  (`digest` on the Releases API) after download and before extract. A missing
+  digest is a hard failure. The GitHub API request uses TLS 1.2 and a
+  `battest-installer` User-Agent.
+- Fixture `script`, `setup`, `teardown`, `copy`, `equals_file`, and
+  `files[].path` values cannot name reserved Windows devices (`nul`, `con`,
+  `aux`, `clock$`, and the rest). `files[].path` also rejects `..` at load
+  time, matching equals_file confinement.
+- JSON Schema reserved-device and `files[].path` patterns match those runtime
+  rules. CI and Action docs continue to pin GitHub Actions to version tags,
+  not commit SHAs.
+
 ## [1.0.2] - 2026-08-15
 
 Production audit: confinement, mock fail-closed, installer, and release gating.
@@ -72,6 +88,7 @@ Rust stub helper.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
+[1.0.3]: https://github.com/tboy1337/battest/releases/tag/v1.0.3
 [1.0.2]: https://github.com/tboy1337/battest/releases/tag/v1.0.2
 [1.0.1]: https://github.com/tboy1337/battest/releases/tag/v1.0.1
 [1.0.0]: https://github.com/tboy1337/battest/releases/tag/v1.0.0

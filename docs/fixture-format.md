@@ -6,7 +6,8 @@ editor/CI catalog (copied into package data); it is not the loader. JSON Schema
 `commandName` keys must already be lowercase stems; runtime also accepts mixed
 case and a trailing `.exe` / `.cmd` / `.bat` / `.com` suffix and normalizes
 them. JSON Schema rejects reserved device names, rooted `files[].path` values,
-and `regex` strings longer than 512 characters.
+`files[].path` entries that contain `..`, and `regex` strings longer than 512
+characters.
 
 ## Manifest file
 
@@ -81,7 +82,9 @@ duplicate names such as `IPCONFIG` and `ipconfig` in the same mapping are a
 schema error. A trailing `.exe` / `.cmd` / `.bat` / `.com` suffix is stripped
 (`ipconfig.exe` is stored as `ipconfig`). Mock and `allow` names must be simple
 executable stems (no path separators) and cannot be Windows reserved device
-names such as `nul` or `con`. `exists: false` means the path must be absent (same as
+names such as `nul` or `con`. The same reserved-device rule applies to
+`script`, `setup`, `teardown`, `copy`, `equals_file`, and `files[].path`.
+`exists: false` means the path must be absent (same as
 `not_exists: true`). `not_exists: false` is rejected.
 
 ## Case directory
@@ -132,5 +135,6 @@ directory. These directory names are skipped: `.git`, `.mypy_cache`,
 `vendor`, `venv`. Scanning a directory uses root-relative case ids
 (`a/hello`, `b/hello`) so parallel runs cannot collide. Duplicate ids are a
 schema error. Running a single file keeps the stem id (`hello`). File matcher
-paths must be relative to the isolated work directory; absolute paths are a
-schema error, and paths cannot escape that directory at assertion time.
+paths must be relative to the isolated work directory; absolute paths, `..`
+segments, and reserved Windows device names are schema errors. Paths that
+still escape that directory at assertion time fail the case.

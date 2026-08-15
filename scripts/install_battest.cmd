@@ -46,11 +46,19 @@ set BATTEST_VERSION=
 set "PS_GET_RELEASE=%BATTEST_TEMP%_get_release.ps1"
 
 call :write_get_release_script
-for /f "tokens=1,2" %%a in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_GET_RELEASE%" 2^>nul') do (
+for /f "tokens=1,2,3" %%a in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_GET_RELEASE%" 2^>nul') do (
     set BATTEST_URL=%%a
     set BATTEST_VERSION=%%b
+    set BATTEST_DIGEST=%%c
 )
 if exist "!PS_GET_RELEASE!" del /F /Q "!PS_GET_RELEASE!" >nul 2>&1
+
+if "!BATTEST_URL!"=="NO_DIGEST" (
+    echo ERROR: GitHub release asset is missing a SHA-256 digest.
+    echo.
+    echo Cannot verify the download. Please try again later.
+    goto :error_exit
+)
 
 if "!BATTEST_URL!"=="NOT_FOUND" (
     echo ERROR: Failed to find Windows download URL from GitHub API.
@@ -70,6 +78,13 @@ if "!BATTEST_VERSION!"=="" (
     echo ERROR: Failed to parse battest version from GitHub API response.
     echo.
     echo Cannot proceed with installation.
+    goto :error_exit
+)
+
+if "!BATTEST_DIGEST!"=="" (
+    echo ERROR: Failed to parse SHA-256 digest from GitHub API response.
+    echo.
+    echo Cannot verify the download. Cannot proceed with installation.
     goto :error_exit
 )
 
@@ -178,6 +193,19 @@ if !FILESIZE! lss !MIN_DOWNLOAD_BYTES! (
     goto :error_restore
 )
 
+REM Verify SHA-256 digest published by GitHub for this release asset
+echo.
+echo Verifying SHA-256 digest...
+echo.
+set "PS_HASH=%BATTEST_TEMP%_hash.ps1"
+call :write_hash_script
+powershell -NoProfile -ExecutionPolicy Bypass -File "!PS_HASH!" 2>&1
+if !errorlevel! neq 0 (
+    echo ERROR: SHA-256 verification failed.
+    goto :error_restore
+)
+if exist "!PS_HASH!" del /F /Q "!PS_HASH!" >nul 2>&1
+
 REM Extract battest
 echo.
 echo Extracting battest...
@@ -281,17 +309,65 @@ echo In the current session, battest commands should already be available.
 echo.
 goto :end
 
-REM Write PowerShell script to fetch latest release URL and tag
+REM Write PowerShell script to fetch latest release URL, tag, and digest
 :write_get_release_script
 (
-echo $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/tboy1337/battest/releases?per_page=100'
+echo $tls = [Net.SecurityProtocolType]::Tls12
+echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor $tls
+echo $headers = @{ 'User-Agent' = 'battest-installer'; 'Accept' = 'application/vnd.github+json' }
+echo $uri = 'https://api.github.com/repos/tboy1337/battest/releases?per_page=100'
+echo $releases = Invoke-RestMethod -Uri $uri -Headers $headers
 echo $release = $releases ^| Where-Object { -not $_.prerelease -and -not $_.draft } ^| Select-Object -First 1
 echo if (-not $release^) { Write-Output 'NOT_FOUND'; exit 0 }
 echo $asset = $release.assets ^| Where-Object { $_.name -like 'Battest-v*.zip' } ^| Select-Object -First 1
 echo if (-not $asset^) { Write-Output 'NOT_FOUND'; exit 0 }
-echo $line = $asset.browser_download_url + ' ' + $release.tag_name
+echo $digest = $null
+echo if ($asset.PSObject.Properties['digest'] -and $asset.digest^) { $digest = [string]$asset.digest }
+echo if (-not $digest^) { Write-Output 'NO_DIGEST'; exit 0 }
+echo $line = $asset.browser_download_url + ' ' + $release.tag_name + ' ' + $digest
 echo Write-Output $line
 ) > "!PS_GET_RELEASE!"
+exit /b 0
+
+REM Write PowerShell script to verify the GitHub SHA-256 digest
+:write_hash_script
+(
+echo $expected = $env:BATTEST_DIGEST
+echo $path = '%BATTEST_TEMP%.zip'
+echo if (-not $expected^) {
+echo Write-Host 'ERROR: GitHub asset digest is missing.'
+echo exit 1
+echo }
+echo $prefix = 'sha256:'
+echo if (-not $expected.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase^)^) {
+echo Write-Host "ERROR: GitHub asset digest is not SHA-256: $expected"
+echo exit 1
+echo }
+echo $hex = $expected.Substring($prefix.Length^)
+echo if ($hex.Length -ne 64^) {
+echo Write-Host 'ERROR: GitHub SHA-256 digest has unexpected length.'
+echo exit 1
+echo }
+echo foreach ($ch in $hex.ToCharArray(^)^) {
+echo if ($ch -notmatch '[0-9a-fA-F]'^) {
+echo Write-Host 'ERROR: GitHub SHA-256 digest is not hexadecimal.'
+echo exit 1
+echo }
+echo }
+echo try {
+echo $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256^).Hash.ToLowerInvariant(^)
+echo }
+echo catch {
+echo Write-Host "ERROR: $_"
+echo exit 1
+echo }
+echo if ($actual -ne $hex.ToLowerInvariant(^)^) {
+echo Write-Host "ERROR: SHA-256 mismatch (expected $hex, got $actual^)."
+echo exit 1
+echo }
+echo Write-Host 'SHA-256 digest verified'
+echo exit 0
+) > "!PS_HASH!"
 exit /b 0
 
 REM Write PowerShell script to return downloaded archive size in bytes
@@ -348,6 +424,7 @@ REM LINT:IGNORE SEC003
 if exist "%BATTEST_TEMP%" rmdir /S /Q "%BATTEST_TEMP%" >nul 2>&1
 if exist "%BATTEST_TEMP%_get_release.ps1" del /F /Q "%BATTEST_TEMP%_get_release.ps1" >nul 2>&1
 if exist "%BATTEST_TEMP%_file_size.ps1" del /F /Q "%BATTEST_TEMP%_file_size.ps1" >nul 2>&1
+if exist "%BATTEST_TEMP%_hash.ps1" del /F /Q "%BATTEST_TEMP%_hash.ps1" >nul 2>&1
 if exist "%BATTEST_TEMP%_expand.ps1" del /F /Q "%BATTEST_TEMP%_expand.ps1" >nul 2>&1
 if exist "%BATTEST_TEMP%_update_path.ps1" del /F /Q "%BATTEST_TEMP%_update_path.ps1" >nul 2>&1
 exit /b 0
