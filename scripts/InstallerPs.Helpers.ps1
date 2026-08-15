@@ -26,6 +26,10 @@ function Get-InstallerPsScriptMap {
             }
         }
         'uninstall_battest.cmd' = [ordered]@{
+            'write_kill_script'        = @{
+                Fixture      = 'Stop-BattestInstalledProcess.ps1'
+                Placeholders = @{ '%BATTEST_BIN%' = '__BATTEST_BIN__' }
+            }
             'write_remove_path_script' = @{
                 Fixture      = 'Remove-BattestUserPath.ps1'
                 Placeholders = @{ '%BATTEST_BIN%' = '__BATTEST_BIN__' }

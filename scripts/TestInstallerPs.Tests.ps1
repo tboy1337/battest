@@ -9,7 +9,7 @@ BeforeAll {
 Describe 'Installer batch PowerShell parity' {
     It 'matches fixture content for each write_*_script block' {
         $pairs = Get-InstallerPsParityPairs -ScriptsRoot $script:ScriptsRoot -InstallerPsRoot $script:InstallerPsRoot
-        $pairs.Count | Should -Be 6
+        $pairs.Count | Should -Be 7
 
         foreach ($pair in $pairs) {
             $normalizedExtracted = Normalize-InstallerPsText -Content $pair.Extracted

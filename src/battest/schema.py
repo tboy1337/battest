@@ -136,7 +136,7 @@ def _collect_warnings(
         script_text = script_path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         LOGGER.error("failed to read script %s: %s", script_path, exc)
-        script_text = ""
+        raise SchemaError(f"cannot read script {script_path}: {exc}") from exc
     for token in catalog.invalid_tilde_forms(script_text):
         message = f"invalid percent-tilde form {token} in {script_path.name}"
         LOGGER.warning("%s", message)

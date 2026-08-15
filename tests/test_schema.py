@@ -28,9 +28,11 @@ from battest.models import (
     normalize_command_name,
     path_has_parent_segment,
     path_has_reserved_device,
+    require_relative_fixture_path,
 )
 from battest.schema import (
     SchemaError,
+    _confine_to_fixture,
     fixture_stem,
     load_cases_from_path,
     parse_document,
@@ -74,7 +76,9 @@ def test_schema_payload_is_object() -> None:
     relative = payload["$defs"]["relativeFixturePath"]
     assert payload["properties"]["script"]["$ref"].endswith("relativeFixturePath")
     assert payload["properties"]["setup"]["$ref"].endswith("relativeFixturePath")
-    assert payload["properties"]["copy"]["items"]["$ref"].endswith("relativeFixturePath")
+    assert payload["properties"]["copy"]["items"]["$ref"].endswith(
+        "relativeFixturePath"
+    )
     reserved_path = str(relative["not"])
     assert "[Nn][Uu][Ll]" in reserved_path
     assert "[Cc][Oo][Nn]" in reserved_path
@@ -299,7 +303,7 @@ def test_invalid_tilde_in_script_and_args(tmp_path: Path) -> None:
     assert "%~*" in joined
 
 
-def test_script_read_oserror_skips_tilde_scan(
+def test_script_read_oserror_is_schema_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write_script(tmp_path, "run.cmd")
@@ -316,8 +320,8 @@ def test_script_read_oserror_skips_tilde_scan(
         return original(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", maybe_boom)
-    cases = load_cases_from_path(manifest)
-    assert cases[0].script_path.name == "run.cmd"
+    with pytest.raises(SchemaError, match="cannot read script"):
+        load_cases_from_path(manifest)
 
 
 def test_params_overlay_env_and_allow(tmp_path: Path) -> None:
@@ -735,7 +739,7 @@ def test_copy_path_must_stay_under_fixture_dir(tmp_path: Path) -> None:
         "expect:\n  exit_code: 0\n",
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="escap"):
+    with pytest.raises(SchemaError, match=r"\.\."):
         load_cases_from_path(manifest)
 
 
@@ -748,7 +752,7 @@ def test_script_must_stay_under_fixture_dir(tmp_path: Path) -> None:
         "description: escape\nscript: ../battest-outside.cmd\nexpect:\n  exit_code: 0\n",
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="script path escapes"):
+    with pytest.raises(SchemaError, match=r"\.\."):
         load_cases_from_path(manifest)
 
 
@@ -760,7 +764,7 @@ def test_script_rejects_absolute_path(tmp_path: Path) -> None:
         f"description: abs\nscript: '{posix}'\nexpect:\n  exit_code: 0\n",
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="script path escapes"):
+    with pytest.raises(SchemaError, match="relative"):
         load_cases_from_path(manifest)
 
 
@@ -774,14 +778,14 @@ def test_setup_and_teardown_must_stay_under_fixture_dir(tmp_path: Path) -> None:
         "setup: ../battest-outside-setup.cmd\nexpect:\n  exit_code: 0\n",
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="setup path escapes"):
+    with pytest.raises(SchemaError, match=r"\.\."):
         load_cases_from_path(manifest)
     manifest.write_text(
         "description: teardown escape\nscript: run.cmd\n"
         "teardown: ../battest-outside-setup.cmd\nexpect:\n  exit_code: 0\n",
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="teardown path escapes"):
+    with pytest.raises(SchemaError, match=r"\.\."):
         load_cases_from_path(manifest)
 
 
@@ -1099,7 +1103,9 @@ def test_normalize_command_name_strips_exe_and_rejects_paths() -> None:
         normalize_command_name("con.txt")
 
 
-def test_file_matcher_rejects_parent_segment_and_reserved_devices() -> None:
+def test_file_matcher_rejects_parent_segment_and_reserved_devices(
+    tmp_path: Path,
+) -> None:
     assert path_has_parent_segment("../secret.txt")
     assert path_has_parent_segment("foo\\..\\bar.txt")
     assert not path_has_parent_segment("out.txt")
@@ -1107,6 +1113,7 @@ def test_file_matcher_rejects_parent_segment_and_reserved_devices() -> None:
     assert path_has_reserved_device("subdir/con.txt")
     assert path_has_reserved_device("AUX")
     assert path_has_reserved_device("clock$")
+    assert path_has_reserved_device("/nul")
     assert not path_has_reserved_device("out.txt")
     with pytest.raises(ValidationError, match=r"\.\."):
         FileMatcher(path="../secret.txt", exists=True)
@@ -1116,11 +1123,33 @@ def test_file_matcher_rejects_parent_segment_and_reserved_devices() -> None:
         FileMatcher(path="logs/con.txt", exists=True)
     with pytest.raises(ValidationError, match="reserved"):
         OutputMatcher(equals_file="nul.txt")
+    with pytest.raises(ValidationError, match=r"\.\."):
+        OutputMatcher(equals_file="../secret.txt")
+    with pytest.raises(ValidationError, match="relative"):
+        OutputMatcher(equals_file="C:foo")
+    assert OutputMatcher.equals_file_must_be_relative(None) is None
+    assert FileMatcher.file_equals_file_must_be_relative(None) is None
     with pytest.raises(ValidationError, match="reserved"):
         CaseDocument.model_validate(
             {
                 "description": "t",
                 "script": "nul",
+                "expect": {"exit_code": 0},
+            }
+        )
+    with pytest.raises(ValidationError, match=r"\.\."):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "script": "../run.cmd",
+                "expect": {"exit_code": 0},
+            }
+        )
+    with pytest.raises(ValidationError, match="relative"):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "script": "C:foo",
                 "expect": {"exit_code": 0},
             }
         )
@@ -1132,6 +1161,25 @@ def test_file_matcher_rejects_parent_segment_and_reserved_devices() -> None:
                 "expect": {"exit_code": 0},
             }
         )
+    with pytest.raises(ValidationError, match=r"\.\."):
+        CaseDocument.model_validate(
+            {
+                "description": "t",
+                "copy": ["../shared.txt"],
+                "expect": {"exit_code": 0},
+            }
+        )
+    with pytest.raises(ValueError, match="relative"):
+        require_relative_fixture_path("C:/Windows/notepad.exe", "path")
+    with pytest.raises(ValueError, match=r"\.\."):
+        require_relative_fixture_path("foo/../bar.cmd", "path")
+    assert CaseDocument.document_paths_must_be_relative(None) is None
+    with pytest.raises(SchemaError, match="reserved"):
+        _confine_to_fixture(Path("."), "nul", Path("case.yaml"), "script")
+    with pytest.raises(SchemaError, match="escapes"):
+        _confine_to_fixture(Path("."), "C:foo", Path("case.yaml"), "script")
+    with pytest.raises(SchemaError, match="escapes"):
+        _confine_to_fixture(tmp_path, "../outside.txt", tmp_path / "case.yaml", "copy")
 
 
 def test_mock_path_and_reserved_names_are_schema_errors() -> None:
@@ -1261,7 +1309,7 @@ def test_load_rejects_escaping_equals_file(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="escapes"):
+    with pytest.raises(SchemaError, match=r"\.\."):
         load_cases_from_path(manifest)
 
 
@@ -1279,7 +1327,7 @@ def test_load_rejects_rooted_script_and_equals_file(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="escapes"):
+    with pytest.raises(SchemaError, match="relative"):
         load_cases_from_path(rooted_script)
     rooted_equals = tmp_path / "equals.battest.yaml"
     rooted_equals.write_text(
@@ -1294,7 +1342,7 @@ def test_load_rejects_rooted_script_and_equals_file(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="escapes"):
+    with pytest.raises(SchemaError, match="relative"):
         load_cases_from_path(rooted_equals)
     unc_equals = tmp_path / "unc.battest.yaml"
     unc_equals.write_text(
@@ -1309,7 +1357,7 @@ def test_load_rejects_rooted_script_and_equals_file(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="escapes"):
+    with pytest.raises(SchemaError, match="relative"):
         load_cases_from_path(unc_equals)
     slash_equals = tmp_path / "slash.battest.yaml"
     slash_equals.write_text(
@@ -1324,7 +1372,7 @@ def test_load_rejects_rooted_script_and_equals_file(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    with pytest.raises(SchemaError, match="escapes"):
+    with pytest.raises(SchemaError, match="relative"):
         load_cases_from_path(slash_equals)
 
 

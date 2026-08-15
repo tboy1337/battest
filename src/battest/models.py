@@ -64,8 +64,6 @@ def reserved_device_stem(component: str) -> str:
 def path_has_reserved_device(value: str) -> bool:
     """Return True when any path component is a reserved Windows device name."""
     for part in _posix_path_parts(value):
-        if part in {"/", ""}:
-            continue
         if reserved_device_stem(part) in WINDOWS_RESERVED_DEVICE_NAMES:
             LOGGER.warning("path %r uses reserved Windows device %r", value, part)
             return True
@@ -82,6 +80,17 @@ def require_no_reserved_device(value: str, label: str) -> str:
     if path_has_reserved_device(value):
         raise ValueError(f"{label} cannot use a reserved Windows device name")
     return value
+
+
+def require_relative_fixture_path(value: str, label: str) -> str:
+    """Reject rooted, escaping, or reserved-device paths in fixture documents."""
+    if is_rooted_path(value):
+        LOGGER.warning("rejecting rooted %s %r", label, value)
+        raise ValueError(f"{label} must be relative to the fixture directory")
+    if path_has_parent_segment(value):
+        LOGGER.warning("rejecting %s with parent segment %r", label, value)
+        raise ValueError(f"{label} cannot contain '..'")
+    return require_no_reserved_device(value, label)
 
 
 FinitePositiveFloat = Annotated[float, AfterValidator(require_finite_positive)]
@@ -118,11 +127,11 @@ class OutputMatcher(BaseModel):
 
     @field_validator("equals_file")
     @classmethod
-    def equals_file_rejects_reserved_devices(cls, value: str | None) -> str | None:
-        """Reject equals_file paths that name a reserved Windows device."""
+    def equals_file_must_be_relative(cls, value: str | None) -> str | None:
+        """Reject equals_file paths that are rooted, escaping, or reserved devices."""
         if value is None:
             return None
-        return require_no_reserved_device(value, "equals_file")
+        return require_relative_fixture_path(value, "equals_file")
 
     @field_validator("regex")
     @classmethod
@@ -183,11 +192,11 @@ class FileMatcher(BaseModel):
 
     @field_validator("equals_file")
     @classmethod
-    def file_equals_file_rejects_reserved_devices(cls, value: str | None) -> str | None:
-        """Reject equals_file paths that name a reserved Windows device."""
+    def file_equals_file_must_be_relative(cls, value: str | None) -> str | None:
+        """Reject equals_file paths that are rooted, escaping, or reserved devices."""
         if value is None:
             return None
-        return require_no_reserved_device(value, "equals_file")
+        return require_relative_fixture_path(value, "equals_file")
 
     @field_validator("path")
     @classmethod
@@ -420,17 +429,17 @@ class CaseDocument(BaseModel):
 
     @field_validator("script", "setup", "teardown")
     @classmethod
-    def document_paths_reject_reserved_devices(cls, value: str | None) -> str | None:
-        """Reject script/setup/teardown paths that name a reserved Windows device."""
+    def document_paths_must_be_relative(cls, value: str | None) -> str | None:
+        """Reject script/setup/teardown paths that are rooted, escaping, or devices."""
         if value is None:
             return None
-        return require_no_reserved_device(value, "path")
+        return require_relative_fixture_path(value, "path")
 
     @field_validator("copy_files")
     @classmethod
-    def copy_paths_reject_reserved_devices(cls, value: list[str]) -> list[str]:
-        """Reject copy entries that name a reserved Windows device."""
-        return [require_no_reserved_device(item, "copy") for item in value]
+    def copy_paths_must_be_relative(cls, value: list[str]) -> list[str]:
+        """Reject copy entries that are rooted, escaping, or reserved devices."""
+        return [require_relative_fixture_path(item, "copy") for item in value]
 
     @field_validator("description")
     @classmethod

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
+from pydantic import ValidationError
 import pytest
 
 from battest.assertlib import (
@@ -196,13 +197,15 @@ def test_match_output_equals_file_rejects_escape(tmp_path: Path) -> None:
     source.mkdir()
     failures = match_output(
         "stdout",
-        OutputMatcher(equals_file="../secret.txt"),
+        OutputMatcher.model_construct(equals_file="../secret.txt"),
         "classified\n",
         source,
         200,
     )
     assert failures
     assert "escapes" in failures[0].message
+    with pytest.raises(ValidationError, match=r"\.\."):
+        OutputMatcher(equals_file="../secret.txt")
 
 
 def test_match_output_equals_file_rejects_absolute(tmp_path: Path) -> None:
@@ -210,7 +213,7 @@ def test_match_output_equals_file_rejects_absolute(tmp_path: Path) -> None:
     golden.write_text("abc\n", encoding="utf-8")
     failures = match_output(
         "stdout",
-        OutputMatcher(equals_file=str(golden)),
+        OutputMatcher.model_construct(equals_file=str(golden)),
         "abc\n",
         tmp_path,
         200,
@@ -219,7 +222,7 @@ def test_match_output_equals_file_rejects_absolute(tmp_path: Path) -> None:
     assert "escapes" in failures[0].message
     drive_relative = match_output(
         "stdout",
-        OutputMatcher(equals_file="C:foo"),
+        OutputMatcher.model_construct(equals_file="C:foo"),
         "abc\n",
         tmp_path,
         200,
@@ -228,7 +231,7 @@ def test_match_output_equals_file_rejects_absolute(tmp_path: Path) -> None:
     assert "escapes" in drive_relative[0].message
     unc = match_output(
         "stdout",
-        OutputMatcher(equals_file="\\\\server\\share\\out.txt"),
+        OutputMatcher.model_construct(equals_file="\\\\server\\share\\out.txt"),
         "abc\n",
         tmp_path,
         200,

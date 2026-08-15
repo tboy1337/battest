@@ -26,7 +26,9 @@ Mitigations that **are** included:
   The wrapper calls the copied script via `%~dp0` and writes the env dump next
   to the wrapper, so a script cannot redirect that dump by changing variables.
 - Warnings for destructive cmd internals (`copy`, `del`, `erase`, `move`,
-  `rd`, `ren`, `rename`, `rmdir`) used with absolute paths
+  `rd`, `ren`, `rename`, `rmdir`) used with absolute paths, including
+  `C:\...`, `C:/...`, quoted targets, and `/flag` switches such as
+  `del /f /q C:\Windows\Temp\x.txt`
 
 Mitigations that **are not** included:
 

@@ -382,6 +382,9 @@ def test_changelog_documents_current_version() -> None:
         f"[{version}]: https://github.com/tboy1337/battest/releases/tag/v{version}"
         in changelog
     )
+    action_docs = (REPO_ROOT / "docs" / "github-action.md").read_text(encoding="utf-8")
+    pin = f"tboy1337/battest@v{version}"
+    assert pin in action_docs
 
 
 def test_installer_verifies_github_asset_digest() -> None:

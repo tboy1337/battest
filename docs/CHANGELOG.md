@@ -7,18 +7,25 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [1.0.3] - 2026-08-15
 
-Production audit: installer integrity and Windows device path confinement.
+Production audit: installer integrity, Windows device path confinement, and
+fail-loud fixture loading.
 
 - The standalone installer verifies the GitHub release-asset SHA-256 digest
   (`digest` on the Releases API) after download and before extract. A missing
   digest is a hard failure. The GitHub API request uses TLS 1.2 and a
   `battest-installer` User-Agent.
 - Fixture `script`, `setup`, `teardown`, `copy`, `equals_file`, and
-  `files[].path` values cannot name reserved Windows devices (`nul`, `con`,
-  `aux`, `clock$`, and the rest). `files[].path` also rejects `..` at load
-  time, matching equals_file confinement.
-- JSON Schema reserved-device and `files[].path` patterns match those runtime
-  rules. CI and Action docs continue to pin GitHub Actions to version tags,
+  `files[].path` values cannot be rooted, cannot contain `..`, and cannot name
+  reserved Windows devices (`nul`, `con`, `aux`, `clock$`, and the rest).
+  JSON Schema patterns match those runtime rules.
+- Unreadable scripts fail at load time instead of skipping tilde warnings.
+  Wrapper-relative script names must be ASCII so cmd.exe cannot mis-decode
+  the UTF-8 wrapper.
+- Destructive-internal absolute-path warnings also match `C:/...`, quoted
+  targets, and `/flag` forms such as `del /f /q C:\Windows\Temp\x.txt`.
+- The uninstaller kill helper is kept in parity with
+  `scripts/installer_ps/Stop-BattestInstalledProcess.ps1`.
+- CI and Action docs continue to pin GitHub Actions to version tags,
   not commit SHAs.
 
 ## [1.0.2] - 2026-08-15

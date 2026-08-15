@@ -1531,6 +1531,10 @@ def test_wrapper_sut_relative_rejects_unsafe_names(tmp_path: Path) -> None:
     percent.write_text("@echo off\n", encoding="utf-8")
     with pytest.raises(ValueError, match="not safe"):
         wrapper_sut_relative(work, percent)
+    non_ascii = work / "café.cmd"
+    non_ascii.write_text("@echo off\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="not safe"):
+        wrapper_sut_relative(work, non_ascii)
 
 
 def test_close_process_streams_oserror(caplog: pytest.LogCaptureFixture) -> None:

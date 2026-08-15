@@ -5,9 +5,11 @@ the Pydantic models in the package. `schema/battest-expect.schema.json` is the
 editor/CI catalog (copied into package data); it is not the loader. JSON Schema
 `commandName` keys must already be lowercase stems; runtime also accepts mixed
 case and a trailing `.exe` / `.cmd` / `.bat` / `.com` suffix and normalizes
-them. JSON Schema rejects reserved device names, rooted `files[].path` values,
-`files[].path` entries that contain `..`, and `regex` strings longer than 512
-characters.
+them. JSON Schema rejects reserved device names, rooted fixture paths
+(`script`, `setup`, `teardown`, `copy`, `equals_file`, and `files[].path`),
+path entries that contain `..`, and `regex` strings longer than 512
+characters. Runtime Pydantic validators apply the same rooted / `..` /
+reserved-device rules at load time.
 
 ## Manifest file
 
@@ -61,13 +63,13 @@ Overlay ids become `name[id]` and must be unique. Overlay `mocks`, `allow`, and
 internal is a schema error, `allow` of an internal warns, and invalid `%~`
 forms in overlay args warn. Mock `exit_code` values must be 0–255 (cmd
 `ERRORLEVEL` range). `copy` entries are placed in the isolated work dir using
-the relative path from the fixture file; paths that escape the fixture
-directory are rejected. `script`, `setup`, and `teardown` are copied into the
-work directory using that same relative layout, so `%~dp0` is the workdir copy
-of the script directory. Sibling files that are not the script, setup, or
-teardown still need `copy:`. `equals_file` paths are likewise confined to the
-fixture directory (absolute paths and `..` escapes are rejected). Missing
-`equals_file` targets are schema errors at load time, not later case failures.
+the relative path from the fixture file. `script`, `setup`, `teardown`,
+`copy`, `equals_file`, and `files[].path` values cannot be rooted, cannot
+contain `..`, and cannot name reserved Windows devices. Missing `equals_file`
+targets are schema errors at load time, not later case failures. Sibling files
+that are not the script, setup, or teardown still need `copy:`. `script`,
+`setup`, and `teardown` are copied into the work directory using that same
+relative layout, so `%~dp0` is the workdir copy of the script directory.
 
 `setup` runs before the script under test. The case timeout starts after
 workdir prep (copying fixtures and PATH stubs). `timeout_seconds` (and the CLI

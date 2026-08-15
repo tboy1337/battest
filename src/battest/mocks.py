@@ -19,9 +19,9 @@ from battest.spec import load_catalog, packaged_data_path
 LOGGER = get_logger("mocks")
 
 _ABS_PATH_RE = re.compile(
-    r"(?P<verb>"
+    r"\b(?P<verb>"
     + "|".join(re.escape(verb) for verb in INTERNAL_DESTRUCTIVE_VERBS)
-    + r")\s+(?P<target>(?:[A-Za-z]:\\|\\\\)[^\s&|<>]+)",
+    + r")\b(?:\s+/[A-Za-z]+)*\s+\"?(?P<target>(?:[A-Za-z]:[\\/]|\\\\)[^\s&|<>\"]+)\"?",
     re.IGNORECASE,
 )
 

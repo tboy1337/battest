@@ -138,3 +138,13 @@ def test_warn_internal_absolute_paths() -> None:
     assert warnings
     assert "cannot be PATH-mocked" in warnings[0]
     assert warn_internal_absolute_paths("del relative.txt") == []
+    forward = warn_internal_absolute_paths("del C:/Windows/Temp/x.txt")
+    assert forward
+    assert "C:/Windows/Temp/x.txt" in forward[0]
+    quoted = warn_internal_absolute_paths(r'del "C:\Windows\Temp\x.txt"')
+    assert quoted
+    flagged = warn_internal_absolute_paths(r"del /f /q C:\Windows\Temp\x.txt")
+    assert flagged
+    quoted_forward = warn_internal_absolute_paths('rd /s /q "C:/Windows/Temp"')
+    assert quoted_forward
+    assert warn_internal_absolute_paths(r"xcopy C:\Windows\Temp\x.txt") == []

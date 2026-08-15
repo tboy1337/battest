@@ -69,7 +69,8 @@ def wrapper_sut_relative(work_dir: Path, sut_path: Path) -> str:
     except ValueError as exc:
         raise ValueError(f"script path escapes work directory: {sut_path}") from exc
     text = str(relative).replace("/", "\\")
-    if any(char in text for char in _WRAPPER_UNSAFE_CHARS):
+    if not text.isascii() or any(char in text for char in _WRAPPER_UNSAFE_CHARS):
+        LOGGER.warning("wrapper-relative script path is not cmd-safe: %s", sut_path)
         raise ValueError(f"script path is not safe for cmd.exe wrapper: {sut_path}")
     LOGGER.debug("wrapper relative sut=%s", text)
     return text
