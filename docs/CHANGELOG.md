@@ -19,9 +19,11 @@ Production audit: confinement, mock fail-closed, installer, and release gating.
 - Uninstaller uses delayed `errorlevel` after `rmdir`, exits `1` when removal
   fails, kills only `%LOCALAPPDATA%\Programs\battest\bin\battest.exe`, and
   matches PATH entries by exact segment.
-- CI reads `[project].version` with `tomllib`, dogfoods examples against the
-  committed stub before rebuilding it, creates the GitHub Release only after
-  wheels exist, then publishes to PyPI with `twine --skip-existing`.
+- CI reads `[project].version` with `tomllib`, including the previous commit's
+  `pyproject.toml` via UTF-8 `git show` (bytes cannot be passed to
+  `tomllib.loads`). It dogfoods examples against the committed stub before
+  rebuilding it, creates the GitHub Release only after wheels exist, then
+  publishes to PyPI with `twine --skip-existing`.
 - JSON Schema rejects reserved device stems, caps `regex` length, and rejects
   rooted file matcher paths. Editors still require lowercase command names.
 - CI and Action docs continue to pin GitHub Actions to version tags, not commit

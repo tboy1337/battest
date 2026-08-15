@@ -571,7 +571,10 @@ def test_ci_retries_release_when_version_tag_is_missing() -> None:
     assert "tag v${NEW_VERSION} is missing; releasing." in script
     assert "should_release=true" in script
     assert "should_release=false" in script
-    assert "tomllib.loads" in script
+    assert "python scripts/read_git_pyproject_version.py HEAD^" in script
+    assert "subprocess.check_output(['git', 'show', 'HEAD^:pyproject.toml'])" not in (
+        script
+    )
     version_step = next(
         step
         for step in check_version["steps"]

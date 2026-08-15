@@ -429,18 +429,7 @@ jobs:
             exit 0
           fi
 
-          OLD_VERSION=$(python -c "
-          import subprocess, sys, tomllib
-          text = subprocess.check_output(['git', 'show', 'HEAD^:pyproject.toml'])
-          loaded = tomllib.loads(text)
-          project = loaded.get('project')
-          if not isinstance(project, dict):
-              sys.exit('Could not read previous version from pyproject.toml')
-          value = project.get('version')
-          if not isinstance(value, str) or not value.strip():
-              sys.exit('Could not read previous version from pyproject.toml')
-          print(value.strip())
-          ")
+          OLD_VERSION=$(python scripts/read_git_pyproject_version.py HEAD^)
           NEW_VERSION="${{ steps.version.outputs.version }}"
           if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
             echo "Version bumped: $OLD_VERSION -> $NEW_VERSION"

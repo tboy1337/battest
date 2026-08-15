@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 import tomllib
 from types import ModuleType
@@ -294,6 +295,76 @@ def test_project_version_reads_pyproject(tmp_path: Path) -> None:
     pyproject.write_text("[project]\nname = 'battest'\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="Missing project.version"):
         module.project_version(pyproject)
+
+
+def test_git_pyproject_text_decodes_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script("read_git_pyproject_version.py")
+    captured: dict[str, object] = {}
+
+    def fake_check_output(command: list[str], encoding: str | None = None) -> str:
+        captured["command"] = command
+        captured["encoding"] = encoding
+        return '[project]\nversion = "9.9.9"\n'
+
+    monkeypatch.setattr(module.subprocess, "check_output", fake_check_output)
+    text = module.git_pyproject_text("HEAD^")
+    assert text == '[project]\nversion = "9.9.9"\n'
+    assert captured["encoding"] == "utf-8"
+    assert captured["command"] == ["git", "show", "HEAD^:pyproject.toml"]
+
+
+def test_git_pyproject_text_reports_git_and_decode_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script("read_git_pyproject_version.py")
+
+    def git_missing(*_args: object, **_kwargs: object) -> str:
+        raise subprocess.CalledProcessError(128, ["git", "show"])
+
+    monkeypatch.setattr(module.subprocess, "check_output", git_missing)
+    with pytest.raises(SystemExit, match="Cannot read HEAD\\^:pyproject.toml"):
+        module.git_pyproject_text("HEAD^")
+
+    def git_absent(*_args: object, **_kwargs: object) -> str:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(module.subprocess, "check_output", git_absent)
+    with pytest.raises(SystemExit, match="Cannot read HEAD\\^:pyproject.toml"):
+        module.git_pyproject_text("HEAD^")
+
+    def not_utf8(*_args: object, **_kwargs: object) -> str:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid")
+
+    monkeypatch.setattr(module.subprocess, "check_output", not_utf8)
+    with pytest.raises(SystemExit, match="Cannot read HEAD:pyproject.toml"):
+        module.git_pyproject_text("HEAD")
+
+
+def test_version_from_toml_requires_project_version() -> None:
+    module = _load_script("read_git_pyproject_version.py")
+    source = "HEAD^:pyproject.toml"
+    assert module.version_from_toml('[project]\nversion = "1.2.3"\n', source) == "1.2.3"
+    with pytest.raises(SystemExit, match="Could not parse"):
+        module.version_from_toml("this is not toml {", source)
+    with pytest.raises(SystemExit, match="Could not read previous version"):
+        module.version_from_toml("name = 'battest'\n", source)
+    with pytest.raises(SystemExit, match="Could not read previous version"):
+        module.version_from_toml("[project]\nname = 'battest'\n", source)
+    with pytest.raises(SystemExit, match="Could not read previous version"):
+        module.version_from_toml('[project]\nversion = "   "\n', source)
+
+
+def test_read_git_project_version_from_head(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_script("read_git_pyproject_version.py")
+    version = module.read_git_project_version("HEAD")
+    assert version == get_version()
+    module.main(["HEAD"])
+    captured = capsys.readouterr()
+    assert captured.out.strip() == version
 
 
 def test_changelog_documents_current_version() -> None:
