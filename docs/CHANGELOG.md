@@ -5,10 +5,11 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
-- Marketplace listing `name` is `battest Action` so GitHub does not reject it
-  as colliding with user [BATTEST](https://github.com/BATTEST).
-  `uses: tboy1337/battest@v1` is unchanged. Action branding (`check-square`,
-  `blue`) is set for the listing.
+## [1.0.9] - 2026-08-20
+
+GitHub Action Marketplace listing and installer-test hygiene.
+
+- Action `name` is `battest Action` with branding (`check-square`, `blue`).
 - Installer tests assert the parsed GitHub asset-host allowlist and URI host
   check. The regex timeout test builds its nested-quantifier pattern at
   runtime so CodeQL does not treat those fixtures as URL sanitizers or a
@@ -219,6 +220,7 @@ Rust stub helper.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
+[1.0.9]: https://github.com/tboy1337/battest/releases/tag/v1.0.9
 [1.0.8]: https://github.com/tboy1337/battest/releases/tag/v1.0.8
 [1.0.7]: https://github.com/tboy1337/battest/releases/tag/v1.0.7
 [1.0.6]: https://github.com/tboy1337/battest/releases/tag/v1.0.6
