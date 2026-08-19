@@ -267,6 +267,10 @@ def _case_from_document(
                 f"teardown script not found for {source}: {document.teardown}"
             )
     warnings = _collect_warnings(script_path, mocks, allow, args)
+    if not expect.has_constraints():
+        message = "expect has no assertions; the case will PASS if the script finishes"
+        LOGGER.warning("%s", message)
+        warnings.append(message)
     _validate_equals_files(base_dir, expect, source)
     LOGGER.debug(
         "resolved case id=%s script=%s args=%s timeout=%s mocks=%s",

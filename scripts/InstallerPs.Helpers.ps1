@@ -18,11 +18,17 @@ function Get-InstallerPsScriptMap {
             }
             'write_expand_script'      = @{
                 Fixture      = 'Expand-BattestArchive.ps1'
-                Placeholders = @{ '%BATTEST_TEMP%' = '__BATTEST_TEMP__' }
+                Placeholders = @{
+                    '%BATTEST_TEMP%'    = '__BATTEST_TEMP__'
+                    '%BATTEST_VERSION%' = '__BATTEST_VERSION__'
+                }
             }
             'write_update_path_script' = @{
                 Fixture      = 'Update-BattestUserPath.ps1'
-                Placeholders = @{ '%BATTEST_BIN%' = '__BATTEST_BIN__' }
+                Placeholders = @{
+                    '%BATTEST_BIN%'  = '__BATTEST_BIN__'
+                    '%BATTEST_TEMP%' = '__BATTEST_TEMP__'
+                }
             }
         }
         'uninstall_battest.cmd' = [ordered]@{
@@ -173,6 +179,9 @@ function Get-InstallerPsFixturePaths {
 function Get-PowerShellAnalyzePaths {
     param([string]$ScriptsRoot)
 
+    # InstallerPs.Helpers.ps1 uses unapproved verbs (Apply-/Normalize-) for
+    # fixture parity helpers. check_action_ps1.ps1 installs modules at runtime.
+    # Keep both out of ScriptAnalyzer; fixtures and action scripts stay in.
     $paths = @(
         (Join-Path $ScriptsRoot 'TestExeSmoke.Helpers.ps1'),
         (Join-Path $ScriptsRoot 'test_exe_smoke.ps1'),
@@ -190,7 +199,7 @@ function Invoke-InstallerPsScriptAnalyzer {
 
     $issues = @()
     foreach ($path in $Paths) {
-        $issues += Invoke-ScriptAnalyzer -Path $path -Settings $SettingsPath -Severity Warning
+        $issues += Invoke-ScriptAnalyzer -Path $path -Settings $SettingsPath
     }
     return $issues
 }

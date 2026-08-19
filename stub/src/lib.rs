@@ -109,7 +109,9 @@ pub fn append_args(log_path: &Path, args: &[String]) -> io::Result<()> {
         }
     }
     let mut log_file = OpenOptions::new().append(true).open(log_path)?;
-    writeln!(log_file, "{}", encode_argv_json(args))?;
+    let line = format!("{}\n", encode_argv_json(args));
+    log_file.write_all(line.as_bytes())?;
+    log_file.sync_data()?;
     Ok(())
 }
 

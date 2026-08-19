@@ -145,6 +145,9 @@ def _run_command(args: argparse.Namespace) -> int:
         except OSError as exc:
             LOGGER.error("failed to write junit xml: %s", exc)
             print(f"failed to write junit xml: {exc}", file=sys.stderr)
+            ran_status = exit_status(results)
+            if ran_status == 1:
+                return 1
             return 2
     return exit_status(results)
 

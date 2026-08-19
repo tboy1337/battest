@@ -140,14 +140,15 @@ function Invoke-BattestAction {
     foreach ($token in @('-m', 'battest', 'run')) {
         $cmdArgs.Add($token)
     }
-    if ($target) {
-        $cmdArgs.Add($target)
-    }
     foreach ($token in $extraArgs) {
         $cmdArgs.Add($token)
     }
     foreach ($token in @($safe, '--junit-xml', $junit)) {
         $cmdArgs.Add($token)
+    }
+    if ($target) {
+        $cmdArgs.Add('--')
+        $cmdArgs.Add($target)
     }
 
     if ($target) {

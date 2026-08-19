@@ -17,9 +17,15 @@ def test_parse_set_output_splits_on_first_equals() -> None:
 
 def test_filter_helper_vars() -> None:
     env = filter_helper_vars(
-        {"FOO": "1", "BATTEST_SUT": "x", "battest_envfile": "y", "Path": "z"}
+        {
+            "FOO": "1",
+            "BATTEST_RC": "0",
+            "BATTEST_CUSTOM": "keep",
+            "battest_rc": "also",
+            "Path": "z",
+        }
     )
-    assert env == {"FOO": "1", "Path": "z"}
+    assert env == {"FOO": "1", "BATTEST_CUSTOM": "keep", "Path": "z"}
 
 
 @pytest.mark.parametrize(

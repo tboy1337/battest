@@ -22,9 +22,9 @@ _ABS_PATH_RE = re.compile(
     r"\b(?P<verb>"
     + "|".join(re.escape(verb) for verb in INTERNAL_DESTRUCTIVE_VERBS)
     + r")\b(?:\s+/[^\s&|<>\"]+)*\s+(?:"
-    r"\"(?P<quoted>(?:[A-Za-z]:[\\/]|\\\\)[^\"]+)\""
+    r"\"(?P<quoted>(?:[A-Za-z]:[\\/]|\\\\|%(?:SystemRoot|SystemDrive)%[\\/]?)[^\"]+)\""
     r"|"
-    r"(?P<unquoted>(?:[A-Za-z]:[\\/]|\\\\)[^\s&|<>\"]+)"
+    r"(?P<unquoted>(?:[A-Za-z]:[\\/]|\\\\|%(?:SystemRoot|SystemDrive)%[\\/]?)[^\s&|<>\"]+)"
     r")",
     re.IGNORECASE,
 )

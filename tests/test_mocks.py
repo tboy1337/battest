@@ -153,6 +153,11 @@ def test_warn_internal_absolute_paths() -> None:
     colon_switch = warn_internal_absolute_paths(r"del /a:h C:\Windows\Temp\x.txt")
     assert colon_switch
     assert r"C:\Windows\Temp\x.txt" in colon_switch[0]
+    env_root = warn_internal_absolute_paths(r"del %SystemRoot%\Temp\x.txt")
+    assert env_root
+    assert r"%SystemRoot%\Temp\x.txt" in env_root[0]
+    env_drive = warn_internal_absolute_paths(r'del "%SystemDrive%\secret.txt"')
+    assert env_drive
     assert warn_internal_absolute_paths(r"xcopy C:\Windows\Temp\x.txt") == []
 
 

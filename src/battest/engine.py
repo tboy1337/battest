@@ -7,21 +7,20 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
-from typing import Protocol
 
 from battest.assertlib import evaluate_case
 from battest.constants import (
     BATTEST_PREFIX,
+    CWD_DUMP_NAME,
     ENV_DUMP_NAME,
-    KILL_DRAIN_TIMEOUT_SECONDS,
+    MAX_CAPTURE_BYTES,
     TEARDOWN_MIN_SECONDS,
     WRAPPER_NAME,
 )
-from battest.encoding import console_encoding, decode_output
+from battest.encoding import console_encoding
 from battest.envsnap import filter_helper_vars, parse_set_output
 from battest.logging_config import get_logger
 from battest.mocks import (
@@ -32,9 +31,15 @@ from battest.mocks import (
     write_mock_tree,
 )
 from battest.models import Case, EngineConfig, Outcome, RunResult
+from battest.process import (
+    ProcessResult,
+    build_cmd_line as build_cmd_line,
+    coerce_process_result,
+    is_path_outside_directory,
+    run_process,
+)
 
 LOGGER = get_logger("engine")
-CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,7 @@ def build_wrapper_text(sut_relative: str) -> str:
         "@echo off\n"
         f'call "%~dp0{sut_relative}" %*\n'
         'set "BATTEST_RC=%ERRORLEVEL%"\n'
+        f'> "%~dp0{CWD_DUMP_NAME}" echo %CD%\n'
         f'set > "%~dp0{ENV_DUMP_NAME}"\n'
         "exit /b %BATTEST_RC%\n"
     )
@@ -81,130 +87,10 @@ class EngineError(RuntimeError):
     """Raised when the host cannot execute batch tests."""
 
 
-class TerminableProcess(Protocol):
-    """Process that can be drained and killed after a timeout.
-
-    ``communicate`` matches :meth:`subprocess.Popen.communicate` so a real
-    ``Popen`` is a structural subtype.
-    """
-
-    def communicate(  # pylint: disable=redefined-builtin
-        self, input: bytes | None = None, timeout: float | None = None
-    ) -> tuple[bytes, bytes]:
-        """Read remaining stdout and stderr."""
-
-    def kill(self) -> None:
-        """Forcibly terminate the process."""
-
-    def poll(self) -> int | None:
-        """Return the exit code when the process has exited, else None."""
-
-    def wait(self, timeout: float | None = None) -> int:
-        """Wait for the process to exit, optionally bounded by timeout."""
-
-
 def require_windows() -> None:
     """Raise EngineError when cmd.exe execution is unavailable."""
     if sys.platform != "win32":
         raise EngineError("battest run requires Windows cmd.exe")
-
-
-def system32_executable(name: str) -> str:
-    """Return System32\\name when that file exists, otherwise the bare name."""
-    system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    candidate = Path(system_root) / "System32" / name
-    if candidate.is_file():
-        LOGGER.debug("resolved system32 executable %s", candidate)
-        return str(candidate)
-    LOGGER.debug("system32 executable %s missing; using bare name %s", candidate, name)
-    return name
-
-
-def cmd_executable() -> str:
-    """Return the absolute path to cmd.exe when possible."""
-    return system32_executable("cmd.exe")
-
-
-def build_cmd_line(wrapper: Path, args: list[str]) -> list[str]:
-    """Build a cmd.exe /d /s /c invocation that preserves arguments."""
-    inner = subprocess.list2cmdline(["call", str(wrapper), *args])
-    return [cmd_executable(), "/d", "/s", "/c", inner]
-
-
-def kill_process_tree(pid: int) -> None:
-    """Kill a process and its descendants on Windows."""
-    LOGGER.warning("killing process tree pid=%s", pid)
-    taskkill = system32_executable("taskkill.exe")
-    try:
-        completed = subprocess.run(
-            [taskkill, "/F", "/T", "/PID", str(pid)],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=KILL_DRAIN_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        LOGGER.error("taskkill timed out for pid=%s", pid)
-        return
-    if completed.returncode != 0:
-        LOGGER.warning(
-            "taskkill pid=%s returned %s stderr=%s",
-            pid,
-            completed.returncode,
-            completed.stderr,
-        )
-
-
-def drain_after_timeout(
-    process: TerminableProcess, timeout_seconds: float
-) -> tuple[bytes, bytes]:
-    """Collect remaining output after a kill, bounded by timeout_seconds."""
-    try:
-        return process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        LOGGER.error("process did not exit after timeout; sending kill")
-        process.kill()
-        try:
-            return process.communicate(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            LOGGER.error("process still alive after kill")
-            return b"", b""
-
-
-def abandon_lingering_process(process: TerminableProcess) -> None:
-    """Kill and wait with a bound; never block forever if the child survives."""
-    if process.poll() is not None:
-        return
-    LOGGER.error("process still running after drain; killing and abandoning")
-    process.kill()
-    try:
-        process.wait(timeout=KILL_DRAIN_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        LOGGER.error("abandoning still-alive process after wait timeout")
-
-
-def _close_process_streams(process: subprocess.Popen[bytes]) -> None:
-    # subprocess type stubs expose stdio as IO[Any]; closing is still required.
-    for stream in (process.stdin, process.stdout, process.stderr):  # type: ignore[misc]
-        if stream is None:  # type: ignore[misc]
-            continue
-        try:
-            stream.close()  # type: ignore[misc]
-        except OSError:
-            LOGGER.debug("failed to close process stream", exc_info=True)
-
-
-def _seed_work_dir(work_dir: Path, copy_paths: list[Path], base_dir: Path) -> None:
-    resolved_base = base_dir.resolve()
-    for source in copy_paths:
-        relative = source.resolve().relative_to(resolved_base)
-        destination = work_dir / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        LOGGER.debug("seeding %s -> %s", source, destination)
-        if source.is_dir():
-            shutil.copytree(source, destination, dirs_exist_ok=True)
-        else:
-            shutil.copy2(source, destination)
 
 
 def _run_process(
@@ -214,61 +100,8 @@ def _run_process(
     stdin_text: str,
     timeout_seconds: float,
     encoding: str,
-) -> tuple[int, str, str, bool]:
-    LOGGER.debug("exec command=%s cwd=%s timeout=%s", command, cwd, timeout_seconds)
-    if timeout_seconds <= 0:
-        LOGGER.error(
-            "timeout already expired before spawn command=%s timeout=%s",
-            command,
-            timeout_seconds,
-        )
-        return -1, "", "", True
-    stdin_bytes = _encode_stdin(stdin_text, encoding)
-    creationflags = CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
-    timed_out = False
-    stdout_bytes = b""
-    stderr_bytes = b""
-    exit_code = -1
-    # Popen.__exit__ waits forever; after timeout we must bound that wait ourselves.
-    process = subprocess.Popen(  # pylint: disable=consider-using-with
-        command,
-        cwd=str(cwd),
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=creationflags,
-    )
-    try:
-        try:
-            stdout_bytes, stderr_bytes = process.communicate(
-                input=stdin_bytes,
-                timeout=timeout_seconds,
-            )
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            LOGGER.error("process timed out pid=%s", process.pid)
-            if process.pid is not None:
-                kill_process_tree(process.pid)
-            stdout_bytes, stderr_bytes = drain_after_timeout(
-                process, KILL_DRAIN_TIMEOUT_SECONDS
-            )
-            abandon_lingering_process(process)
-        exit_code = process.returncode if process.returncode is not None else -1
-    finally:
-        _close_process_streams(process)
-        if process.poll() is None:
-            abandon_lingering_process(process)
-    stdout = decode_output(stdout_bytes or b"", encoding)
-    stderr = decode_output(stderr_bytes or b"", encoding)
-    LOGGER.info(
-        "exec finished exit=%s timeout=%s stdout_len=%s stderr_len=%s",
-        exit_code,
-        timed_out,
-        len(stdout),
-        len(stderr),
-    )
-    return exit_code, stdout, stderr, timed_out
+) -> ProcessResult:
+    return run_process(command, cwd, env, stdin_text, timeout_seconds, encoding)
 
 
 def collapse_path_keys(env: dict[str, str]) -> str:
@@ -360,19 +193,6 @@ def teardown_timeout(deadline: float) -> float:
     return max(remaining_timeout(deadline), TEARDOWN_MIN_SECONDS)
 
 
-def _encode_stdin(stdin_text: str, encoding: str) -> bytes | None:
-    if not stdin_text:
-        return None
-    try:
-        return stdin_text.encode(encoding)
-    except UnicodeEncodeError:
-        LOGGER.error(
-            "stdin contains characters that cannot be encoded as %s",
-            encoding,
-        )
-        raise
-
-
 def _snapshot_env(work_dir: Path, encoding: str) -> dict[str, str]:
     env_dump = work_dir / ENV_DUMP_NAME
     if not env_dump.is_file():
@@ -382,9 +202,43 @@ def _snapshot_env(work_dir: Path, encoding: str) -> dict[str, str]:
     )
 
 
+def _cwd_warning(work_dir: Path, encoding: str) -> str | None:
+    dump = work_dir / CWD_DUMP_NAME
+    if not dump.is_file():
+        return None
+    try:
+        text = dump.read_text(encoding=encoding, errors="replace").strip()
+    except OSError as exc:
+        LOGGER.error("cannot read cwd dump %s: %s", dump, exc)
+        return None
+    if not text:
+        return None
+    if not is_path_outside_directory(text, work_dir):
+        return None
+    message = (
+        f"script changed directory to {text!r}, which is outside the isolated "
+        "working directory; relative filesystem operations are no longer confined"
+    )
+    LOGGER.warning("%s", message)
+    return message
+
+
 def _relocated_path(work_dir: Path, source: Path, base_dir: Path) -> Path:
     relative = source.resolve().relative_to(base_dir.resolve())
     return work_dir / relative
+
+
+def _invoke_process(
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    stdin_text: str,
+    timeout: float,
+    encoding: str,
+) -> ProcessResult:
+    return coerce_process_result(
+        _run_process(command, cwd, env, stdin_text, timeout, encoding)
+    )
 
 
 def _run_setup(
@@ -398,7 +252,7 @@ def _run_setup(
     if setup_path is None:
         return None
     try:
-        setup_exit, _, setup_err, setup_timeout = _run_process(
+        result = _invoke_process(
             build_cmd_line(setup_path, []),
             work_dir,
             env,
@@ -409,11 +263,13 @@ def _run_setup(
     except OSError as exc:
         LOGGER.error("setup failed for %s: %s", case.case_id, exc)
         return f"setup failed: {exc}"
-    if setup_timeout or setup_exit != 0:
+    if result.timed_out or result.exit_code != 0 or result.overflowed:
         message = (
-            f"setup failed exit={setup_exit} timeout={setup_timeout} "
-            f"stderr={setup_err.strip()}"
+            f"setup failed exit={result.exit_code} timeout={result.timed_out} "
+            f"stderr={result.stderr.strip()}"
         )
+        if result.overflowed:
+            message = f"setup output exceeded capture limit; {message}"
         LOGGER.error("%s", message)
         return message
     return None
@@ -430,7 +286,7 @@ def _run_teardown(
     if teardown_path is None:
         return None
     try:
-        exit_code, _, stderr, timed_out = _run_process(
+        result = _invoke_process(
             build_cmd_line(teardown_path, []),
             work_dir,
             env,
@@ -441,11 +297,13 @@ def _run_teardown(
     except OSError as exc:
         LOGGER.error("teardown failed for %s: %s", case.case_id, exc)
         return f"teardown failed: {exc}"
-    if timed_out or exit_code != 0:
+    if result.timed_out or result.exit_code != 0 or result.overflowed:
         message = (
-            f"teardown failed exit={exit_code} timeout={timed_out} "
-            f"stderr={stderr.strip()}"
+            f"teardown failed exit={result.exit_code} timeout={result.timed_out} "
+            f"stderr={result.stderr.strip()}"
         )
+        if result.overflowed:
+            message = f"teardown output exceeded capture limit; {message}"
         LOGGER.error("%s", message)
         return message
     return None
@@ -490,6 +348,9 @@ def _evaluate_after_run(
     timed_out: bool,
 ) -> RunResult:
     captured_env = _snapshot_env(work_dir, encoding)
+    cwd_warning = _cwd_warning(work_dir, encoding)
+    if cwd_warning is not None:
+        warnings = list(warnings) + [cwd_warning]
     try:
         mock_calls = read_call_logs(mock_dir) if mock_dir is not None else {}
     except MockError as exc:
@@ -596,6 +457,19 @@ def _prepare_work_dir(case: Case, config: EngineConfig, work_dir: Path) -> Prepa
     )
 
 
+def _seed_work_dir(work_dir: Path, copy_paths: list[Path], base_dir: Path) -> None:
+    resolved_base = base_dir.resolve()
+    for source in copy_paths:
+        relative = source.resolve().relative_to(resolved_base)
+        destination = work_dir / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        LOGGER.debug("seeding %s -> %s", source, destination)
+        if source.is_dir():
+            shutil.copytree(source, destination, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, destination)
+
+
 def _run_sut(
     case: Case,
     config: EngineConfig,
@@ -619,7 +493,7 @@ def _run_sut(
         return _error_result(case, started, warnings, setup_error)
     try:
         command = build_cmd_line(prepared.wrapper, case.args)
-        exit_code, stdout, stderr, timed_out = _run_process(
+        result = _invoke_process(
             command,
             work_dir,
             prepared.env,
@@ -634,6 +508,44 @@ def _run_sut(
     except OSError as exc:
         LOGGER.error("sut failed for %s: %s", case.case_id, exc)
         return _error_result(case, started, warnings, str(exc))
+    extra_warnings = list(warnings)
+    if result.abandoned:
+        message = (
+            f"abandoned still-alive process pid={result.pid} " f"workdir={work_dir}"
+        )
+        LOGGER.error("%s", message)
+        extra_warnings.append(message)
+    if result.overflowed:
+        message = (
+            f"captured output exceeded the {MAX_CAPTURE_BYTES} byte limit; "
+            "output was truncated"
+        )
+        LOGGER.error("%s", message)
+        duration = time.perf_counter() - started
+        return RunResult(
+            case_id=case.case_id,
+            description=case.description,
+            outcome=Outcome.ERROR,
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_seconds=duration,
+            error_message=message,
+            warnings=extra_warnings,
+        )
+    if result.abandoned and not result.timed_out:
+        duration = time.perf_counter() - started
+        return RunResult(
+            case_id=case.case_id,
+            description=case.description,
+            outcome=Outcome.ERROR,
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            duration_seconds=duration,
+            error_message=extra_warnings[-1],
+            warnings=extra_warnings,
+        )
     duration = time.perf_counter() - started
     return _evaluate_after_run(
         case,
@@ -642,12 +554,12 @@ def _run_sut(
         prepared.mock_dir,
         encoding,
         timeout,
-        warnings,
+        extra_warnings,
         duration,
-        exit_code,
-        stdout,
-        stderr,
-        timed_out,
+        result.exit_code,
+        result.stdout,
+        result.stderr,
+        result.timed_out,
     )
 
 
@@ -659,16 +571,15 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
     encoding = console_encoding()
     timeout = resolved_timeout(case, config)
     LOGGER.info(
-        "execute_case id=%s script=%s timeout=%s safe_defaults=%s",
+        "execute_case id=%s script=%s timeout=%s encoding=%s safe_defaults=%s",
         case.case_id,
         case.script_path,
         timeout,
+        encoding,
         config.safe_defaults,
     )
-    with tempfile.TemporaryDirectory(
-        prefix="battest-", ignore_cleanup_errors=True
-    ) as raw_temp:
-        work_dir = Path(raw_temp)
+    work_dir = Path(tempfile.mkdtemp(prefix="battest-"))
+    try:
         try:
             prepared = _prepare_work_dir(case, config, work_dir)
         except (OSError, ValueError, MockError) as exc:
@@ -695,6 +606,11 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
             prepared.teardown_path,
         )
         return _apply_teardown_result(result, teardown_error)
+    finally:
+        try:
+            shutil.rmtree(work_dir)
+        except OSError as exc:
+            LOGGER.error("failed to remove work dir %s: %s", work_dir, exc)
 
 
 def execute_cases(cases: list[Case], config: EngineConfig) -> list[RunResult]:

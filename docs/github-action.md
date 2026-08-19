@@ -1,7 +1,7 @@
 # GitHub Action
 
 The composite action lives at the repository root (`action.yml`) so consumers
-can write `uses: tboy1337/battest@v1.0.5`. Pin a published release tag rather
+can write `uses: tboy1337/battest@v1.0.6`. Pin a published release tag rather
 than a floating branch. Do not pin this action to a commit SHA.
 It must run on a **Windows** runner (`runs-on: windows-*`).
 
@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: battest
-        uses: tboy1337/battest@v1.0.5
+        uses: tboy1337/battest@v1.0.6
         with:
           path: tests
           safe-defaults: "true"
@@ -49,6 +49,8 @@ That script creates a unique JUnit path (`battest-junit-<guid>.xml`) under
 clobber each other, and does not echo `extra-args` tokens (they can be
 sensitive). Action-owned
 `--junit-xml` and `--safe-defaults` / `--no-safe-defaults` are passed after
-`extra-args`, so those Action inputs cannot be overridden. battest itself
+`extra-args`, so those Action inputs cannot be overridden. The discovery
+`path` is passed after `--` so a path that starts with `-` is not parsed as a
+flag. battest itself
 still overwrites the file after a completed run, and writes a one-testcase
 error suite when discovery or usage fails with `--junit-xml`.

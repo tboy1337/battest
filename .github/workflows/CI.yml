@@ -8,6 +8,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force:
+        description: Overwrite an existing GitHub release tag vX.Y.Z
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -397,6 +402,11 @@ jobs:
       - name: Check dist
         run: python -m twine check dist/*
 
+      - name: Install wheel and import battest
+        run: |
+          python -m pip install dist/*.whl
+          python -c "import battest"
+
   dependency-graph:
     name: Dependency Graph
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -432,10 +442,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
-      group: release-${{ github.sha }}
-      cancel-in-progress: true
+      group: battest-release
+      cancel-in-progress: false
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
+      should_publish_pypi: ${{ steps.check.outputs.should_publish_pypi }}
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
@@ -454,26 +465,44 @@ jobs:
       - name: Decide whether to release
         id: check
         run: |
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          FORCE="${{ github.event.inputs.force }}"
+          TAG_EXISTS=false
+          if git rev-parse --verify --quiet "refs/tags/v${NEW_VERSION}"; then
+            TAG_EXISTS=true
+          fi
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual workflow_dispatch; releasing version ${{ steps.version.outputs.version }}."
+            if [ "$TAG_EXISTS" = true ] && [ "$FORCE" != "true" ]; then
+              echo "Manual dispatch without force; tag v${NEW_VERSION} exists."
+              echo "Skipping GitHub release rewrite; publishing PyPI with skip-existing."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "should_publish_pypi=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Manual workflow_dispatch; releasing version ${NEW_VERSION}."
             echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "should_publish_pypi=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           OLD_VERSION=$(python scripts/read_git_pyproject_version.py HEAD^)
-          NEW_VERSION="${{ steps.version.outputs.version }}"
           if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
             echo "Version bumped: $OLD_VERSION -> $NEW_VERSION"
             echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "should_publish_pypi=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if git rev-parse --verify --quiet "refs/tags/v${NEW_VERSION}"; then
-            echo "Version unchanged ($NEW_VERSION) and tag v${NEW_VERSION} exists; skipping release."
+          if [ "$TAG_EXISTS" = true ]; then
+            echo "Version unchanged ($NEW_VERSION) and tag v${NEW_VERSION} exists."
+            echo "Skipping GitHub assets; still publishing PyPI with skip-existing."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "should_publish_pypi=true" >> "$GITHUB_OUTPUT"
           else
             echo "Version unchanged ($NEW_VERSION) but tag v${NEW_VERSION} is missing; releasing."
             echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "should_publish_pypi=true" >> "$GITHUB_OUTPUT"
           fi
 
   build-windows:
@@ -526,6 +555,10 @@ jobs:
           pyinstaller battest.spec
         shell: pwsh
 
+      - name: Smoke test executable
+        run: .\scripts\test_exe_smoke.ps1 -ExePath .\dist\battest.exe
+        shell: pwsh
+
       - name: Package executable for release
         run: |
           $version = "${{ steps.version.outputs.version }}"
@@ -544,7 +577,7 @@ jobs:
   build-wheels:
     name: Build Python wheels
     needs: [check-version]
-    if: needs.check-version.outputs.should_release == 'true'
+    if: needs.check-version.outputs.should_publish_pypi == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -610,13 +643,27 @@ jobs:
           tag: v${{ needs.check-version.outputs.version }}
           bodyFile: ${{ steps.release_notes.outputs.path }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          allowUpdates: true
-          removeArtifacts: true
+          allowUpdates: ${{ github.event.inputs.force == 'true' }}
+          removeArtifacts: ${{ github.event.inputs.force == 'true' }}
 
   publish-pypi:
     name: Publish wheels to PyPI
-    needs: [create-release]
-    if: needs.create-release.result == 'success'
+    needs: [check-version, build-wheels, create-release]
+    if: |
+      always() &&
+      needs.check-version.result == 'success' &&
+      needs.build-wheels.result == 'success' &&
+      (
+        needs.create-release.result == 'success' ||
+        (
+          needs.check-version.outputs.should_publish_pypi == 'true' &&
+          needs.create-release.result == 'skipped'
+        )
+      )
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -626,20 +673,7 @@ jobs:
           name: python-dist
           path: dist
 
-      - name: Setup python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-
-      - name: Install Twine
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade twine
-
       - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_BATTEST }}
-        run: |
-          twine check dist/*
-          twine upload --skip-existing dist/*
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

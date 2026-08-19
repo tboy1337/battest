@@ -31,12 +31,15 @@ from battest.models import (
     NewlineMode,
     OutputMatcher,
 )
+from battest.retimeout import RegexTimeoutError, search_with_timeout
 
 
 def test_newline_auto_normalizes() -> None:
     assert apply_newline_mode("a\r\nb\r\n", NewlineMode.AUTO) == "a\nb\n"
     assert apply_newline_mode("a\r\nb\r\n", NewlineMode.CRLF) == "a\r\nb\r\n"
     assert apply_newline_mode("a\r\nb\r\n", NewlineMode.LF) == "a\nb\n"
+    assert apply_newline_mode("a\r\nb", None) == "a\r\nb"
+    assert newline_requirement_failure("a\r\nb", None) is None
     with pytest.raises(ValueError, match="unhandled newline mode"):
         apply_newline_mode("x", cast(NewlineMode, object()))
     with pytest.raises(ValueError, match="unhandled newline mode"):
@@ -490,14 +493,14 @@ def test_read_equals_file_oserror(
 ) -> None:
     golden = tmp_path / "golden.txt"
     golden.write_text("expected", encoding="utf-8")
-    original = Path.read_text
+    original = Path.open
 
-    def boom(self: Path, *args: object, **kwargs: object) -> str:
+    def boom(self: Path, *args: object, **kwargs: object) -> object:
         if self.resolve() == golden.resolve():
             raise OSError("locked-golden")
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", boom)
+    monkeypatch.setattr(Path, "open", boom)
     failures = match_output(
         "stdout",
         OutputMatcher(equals_file="golden.txt"),
@@ -530,14 +533,14 @@ def test_match_files_read_oserror(
 ) -> None:
     target = tmp_path / "out.txt"
     target.write_text("hello", encoding="utf-8")
-    original = Path.read_text
+    original = Path.open
 
-    def boom(self: Path, *args: object, **kwargs: object) -> str:
+    def boom(self: Path, *args: object, **kwargs: object) -> object:
         if self.resolve() == target.resolve():
             raise OSError("denied")
         return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", boom)
+    monkeypatch.setattr(Path, "open", boom)
     failures = match_files(
         [FileMatcher(path="out.txt", contains="hello")],
         tmp_path,
@@ -560,6 +563,74 @@ def test_match_files_invalid_utf8_is_failure(tmp_path: Path) -> None:
     )
     assert failures
     assert "not valid utf-8" in failures[0].message
+
+
+def test_match_files_latin1_encoding(tmp_path: Path) -> None:
+    target = tmp_path / "latin1.txt"
+    target.write_bytes("caf\xe9".encode("latin-1"))
+    ok = match_files(
+        [FileMatcher(path="latin1.txt", equals="café", encoding="latin-1")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert ok == []
+    wrong = match_files(
+        [FileMatcher(path="latin1.txt", equals="café")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert wrong
+    assert "utf-8" in wrong[0].message
+
+
+def test_match_files_newline_default_is_exact(tmp_path: Path) -> None:
+    target = tmp_path / "out.txt"
+    target.write_bytes(b"a\r\nb")
+    exact = match_files(
+        [FileMatcher(path="out.txt", equals="a\r\nb")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert exact == []
+    auto_would_pass = match_files(
+        [FileMatcher(path="out.txt", equals="a\nb")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert auto_would_pass
+    normalized = match_files(
+        [FileMatcher(path="out.txt", equals="a\nb", newline=NewlineMode.AUTO)],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert normalized == []
+
+
+def test_match_output_regex_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(_pattern: str, _text: str, timeout_seconds: float = 2.0) -> bool:
+        raise RegexTimeoutError(f"regex match exceeded {timeout_seconds} seconds")
+
+    monkeypatch.setattr("battest.assertlib.search_with_timeout", boom)
+    failures = match_output("stdout", OutputMatcher(regex="ok"), "ok", Path("."), 200)
+    assert failures
+    assert "exceeded" in failures[0].message
+
+
+def test_search_with_timeout_kills_slow_worker() -> None:
+    with pytest.raises(RegexTimeoutError, match="exceeded"):
+        search_with_timeout(r"(a+)+$", "a" * 40 + "b", timeout_seconds=0.5)
+
+
+def test_search_with_timeout_reports_invalid_pattern() -> None:
+    with pytest.raises(Exception, match="unterminated|missing"):
+        search_with_timeout("(", "abc", timeout_seconds=1.0)
 
 
 def test_match_mock_calls() -> None:

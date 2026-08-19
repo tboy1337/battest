@@ -76,6 +76,12 @@ def render_console(results: list[RunResult], stream: TextIO) -> None:
     for result in results:
         label = outcome_handled(result.outcome)
         duration = f"{result.duration_seconds:.3f}s"
+        LOGGER.debug(
+            "case %s outcome=%s duration=%s",
+            result.case_id,
+            result.outcome,
+            duration,
+        )
         stream.write(f"{label} {result.case_id} ({duration}) {result.description}\n")
         for warning in result.warnings:
             stream.write(f"  warning: {warning}\n")

@@ -220,26 +220,14 @@ if !errorlevel! neq 0 (
 if exist "!PS_EXPAND!" del /F /Q "!PS_EXPAND!" >nul 2>&1
 
 REM Locate extracted executable
-set BATTEST_SOURCE_EXE=
 set "BATTEST_SOURCE_EXE=%BATTEST_TEMP%\Battest-!BATTEST_VERSION!\battest.exe"
 if not exist "!BATTEST_SOURCE_EXE!" (
-    set BATTEST_SOURCE_EXE=
-    for /f "tokens=*" %%f in ('dir /s /b "%BATTEST_TEMP%\battest.exe" 2^>nul') do (
-        set BATTEST_SOURCE_EXE=%%f
-        goto :found_exe
-    )
-)
-
-if "!BATTEST_SOURCE_EXE!"=="" (
     echo ERROR: battest executable not found in extracted archive.
     echo.
     echo Expected layout: Battest-!BATTEST_VERSION!\battest.exe
-    echo The archive structure may have changed or be corrupted.
+    echo Recursive search for any battest.exe is not used.
     goto :error_restore
 )
-
-REM Resume install after executable path is resolved
-:found_exe
 
 REM Install battest executable
 echo Installing battest executable...
@@ -289,8 +277,14 @@ if !errorlevel! neq 0 (
 )
 if exist "!PS_UPDATE_PATH!" del /F /Q "!PS_UPDATE_PATH!" >nul 2>&1
 
-REM Update PATH for current session
-set "PATH=%PATH%;%BATTEST_BIN%"
+REM Update PATH for current session (case-insensitive, trailing \ equivalent)
+if exist "%BATTEST_TEMP%_session_path.txt" (
+    REM LINT:IGNORE SEC001
+    set /p PATH=<"%BATTEST_TEMP%_session_path.txt"
+    if exist "%BATTEST_TEMP%_session_path.txt" del /F /Q "%BATTEST_TEMP%_session_path.txt" >nul 2>&1
+) else (
+    set "PATH=%PATH%;%BATTEST_BIN%"
+)
 
 REM Success! Clean up temporary files and backup
 call :cleanup
@@ -386,7 +380,34 @@ REM Write PowerShell script to expand the downloaded archive
 :write_expand_script
 (
 echo try {
-echo Expand-Archive -LiteralPath '%BATTEST_TEMP%.zip' -DestinationPath '%BATTEST_TEMP%' -Force
+echo Add-Type -AssemblyName System.IO.Compression.FileSystem
+echo $zipPath = '%BATTEST_TEMP%.zip'
+echo $destRoot = '%BATTEST_TEMP%'
+echo $releaseTag = '%BATTEST_VERSION%'
+echo $destFull = [IO.Path]::GetFullPath($destRoot^)
+echo if (-not $destFull.EndsWith('\'^)^) { $destFull = $destFull + '\' }
+echo $archive = [IO.Compression.ZipFile]::OpenRead($zipPath^)
+echo try {
+echo foreach ($entry in $archive.Entries^) {
+echo $target = [IO.Path]::GetFullPath((Join-Path $destFull $entry.FullName^)^)
+echo if (-not $target.StartsWith($destFull, [StringComparison]::OrdinalIgnoreCase^)^) {
+echo Write-Host ('ERROR: archive entry escapes destination: ' + $entry.FullName^)
+echo exit 1
+echo }
+echo }
+echo }
+echo finally {
+echo $archive.Dispose(^)
+echo }
+echo if (-not (Test-Path -LiteralPath $destRoot^)^) {
+echo New-Item -ItemType Directory -Path $destRoot -Force ^| Out-Null
+echo }
+echo Expand-Archive -LiteralPath $zipPath -DestinationPath $destRoot -Force
+echo $expected = Join-Path $destRoot ('Battest-' + $releaseTag + '\battest.exe'^)
+echo if (-not (Test-Path -LiteralPath $expected^)^) {
+echo Write-Host ('ERROR: expected Battest-' + $releaseTag + '\battest.exe under extract directory'^)
+echo exit 1
+echo }
 echo exit 0
 echo }
 echo catch {
@@ -405,9 +426,10 @@ echo $path = [Environment]::GetEnvironmentVariable('Path', 'User'^)
 echo if (-not $path^) { $path = '' }
 echo $segments = @($path -split ';' ^| Where-Object { $_ -ne '' }^)
 echo $normalizedBin = $binPath.TrimEnd('\'^)
+echo $cmp = [System.StringComparison]::OrdinalIgnoreCase
 echo $already = $false
 echo foreach ($seg in $segments^) {
-echo if ([string]::Equals($seg.TrimEnd('\'^), $normalizedBin, [System.StringComparison]::OrdinalIgnoreCase^)^) {
+echo if ([string]::Equals($seg.TrimEnd('\'^), $normalizedBin, $cmp^)^) {
 echo $already = $true
 echo break
 echo }
@@ -420,6 +442,20 @@ echo }
 echo else {
 echo Write-Host 'battest already in User PATH'
 echo }
+echo $sessionSegments = @($env:Path -split ';' ^| Where-Object { $_ -ne '' }^)
+echo $seen = @{}
+echo $sessionOut = New-Object System.Collections.Generic.List[string]
+echo foreach ($seg in $sessionSegments^) {
+echo $key = $seg.TrimEnd('\'^).ToLowerInvariant(^)
+echo if ($seen.Contains($key^)^) { continue }
+echo $seen[$key] = $true
+echo [void]$sessionOut.Add($seg^)
+echo }
+echo if (-not $seen.Contains($normalizedBin.ToLowerInvariant(^)^)^) {
+echo [void]$sessionOut.Add($binPath^)
+echo }
+echo $sessionPathFile = '%BATTEST_TEMP%_session_path.txt'
+echo Set-Content -LiteralPath $sessionPathFile -Value ($sessionOut -join ';'^) -Encoding ASCII -NoNewline
 echo exit 0
 echo }
 echo catch {

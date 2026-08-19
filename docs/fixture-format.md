@@ -85,7 +85,9 @@ budget is `TIMEOUT`). After the budget expires, teardown still runs with at leas
 five seconds. Assertions (exit code, output, env, files, mock calls) run
 against the work directory **before** `teardown`. `teardown` always runs when
 it is set, including after a failed `setup`. A failing teardown turns an
-otherwise passing case into `ERROR`. Mock command names are case-insensitive;
+otherwise passing case into `ERROR`. An `expect` mapping with no constraints
+still PASSes if the script finishes; battest warns that the case has no
+assertions. Mock command names are case-insensitive;
 duplicate names such as `IPCONFIG` and `ipconfig` in the same mapping are a
 schema error. A trailing `.exe` / `.cmd` / `.bat` / `.com` suffix is stripped
 (`ipconfig.exe` is stored as `ipconfig`). Mock and `allow` names must be simple
@@ -115,17 +117,24 @@ endings in the captured text (lone LF fails) and canonicalizes expected YAML
 LF to CRLF so authors can write logical lines. Invalid `regex` patterns are a
 schema error. Nested quantifiers such as `(a+)+`, quantified alternation such
 as `(a|a)*`, and patterns longer than 512 characters are rejected at load
-time. `regex` is matched against newline-normalized captured text; the
+time. Remaining ReDoS shapes are bounded at runtime by a 2-second killed
+worker; JSON Schema only documents the length cap. `regex` is matched against
+newline-normalized captured text; the
 pattern itself is not rewritten. `empty: true` treats surrounding whitespace
 as empty; `empty: false` fails when the stripped text is empty. `contains` and
 mock `args_contains` must be
 non-empty; `""` is a schema error. A non-UTF-8 `equals_file` or workdir file
-read for `contains`/`equals` is a case failure, not a runner crash. Each
+read for `contains`/`equals` is a case failure, not a runner crash. File
+matchers default to `encoding: utf-8` and exact newlines (they do not inherit
+stdout `newline: auto`). Optional `newline` on a file matcher uses the same
+`auto` / `lf` / `crlf` modes as output. Each
 `files` entry must set at least one of `exists`, `not_exists`, `contains`,
 `equals`, or `equals_file`. `exists: false` / `not_exists: true` asserts
 absence and cannot be combined with content matchers. `not_called: true`
 cannot be combined with `args_contains`. A matcher with only `newline: lf` or
-`newline: crlf` still enforces those line endings.
+`newline: crlf` still enforces those line endings. `args` tokens cannot
+contain `"`, `&`, `|`, `<`, `>`, `^`, CR, or LF because `cmd /c` re-parses
+them after CreateProcess quoting.
 
 ## Environment matchers
 

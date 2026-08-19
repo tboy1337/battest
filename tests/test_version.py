@@ -383,8 +383,10 @@ def test_changelog_documents_current_version() -> None:
         in changelog
     )
     action_docs = (REPO_ROOT / "docs" / "github-action.md").read_text(encoding="utf-8")
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     pin = f"tboy1337/battest@v{version}"
     assert pin in action_docs
+    assert pin in readme
 
 
 def test_installer_verifies_github_asset_digest() -> None:

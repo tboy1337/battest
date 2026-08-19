@@ -101,7 +101,11 @@ Describe 'Invoke-BattestAction' {
         $script:CapturedArgs[1] | Should -Be 'battest'
         $script:CapturedArgs | Should -Contain '--safe-defaults'
         $script:CapturedArgs | Should -Contain '--junit-xml'
+        $script:CapturedArgs | Should -Contain '--'
         $script:CapturedArgs | Should -Contain 'examples'
+        $dash = [array]::IndexOf($script:CapturedArgs, '--')
+        $dash | Should -BeGreaterThan -1
+        $script:CapturedArgs[$dash + 1] | Should -Be 'examples'
         $script:CapturedArgs | Should -Contain '--jobs'
         $script:CapturedArgs | Should -Contain '1'
     }
@@ -149,6 +153,15 @@ Describe 'Invoke-BattestAction' {
         $script:CapturedArgs[$safeLast] | Should -Be '--safe-defaults'
         $script:CapturedArgs[$junitLast + 1] | Should -Be $junit
         $script:CapturedArgs | Should -Contain '--jobs'
+    }
+
+    It 'passes a path that starts with a dash after --' {
+        $env:BATTEST_PATH = '-sneaky-fixtures'
+        Invoke-BattestAction | Should -Be 0
+        $dash = [array]::IndexOf($script:CapturedArgs, '--')
+        $dash | Should -BeGreaterThan -1
+        $script:CapturedArgs[$dash + 1] | Should -Be '-sneaky-fixtures'
+        $script:CapturedArgs | Should -Contain '--safe-defaults'
     }
 
     It 'uses a unique JUnit path per invocation' {

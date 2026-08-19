@@ -12,8 +12,8 @@ battest [--version] run [path] [--junit-xml FILE] [--jobs N]
 | `--version` | Print the battest version and exit |
 | `--junit-xml` | Write xunit2 JUnit XML. When this flag is set, usage, schema, empty-discovery, and engine errors (exit 2) still write a one-testcase error suite named `battest` |
 | `--jobs` | Parallel case execution (each case has its own temp dir). Must be between 1 and 256 inclusive |
-| `--timeout` | Default timeout when a case omits `timeout_seconds`. Must be a finite number greater than 0 (`nan` and `inf` are rejected) |
-| `--max-diff` | Truncate failure diffs and captured expected/actual text to this many characters. Must be >= 1 |
+| `--timeout` | Default timeout when a case omits `timeout_seconds`. Must be a finite number greater than 0 (`nan` and `inf` are rejected). Default: `30` |
+| `--max-diff` | Truncate failure diffs and captured expected/actual text to this many characters. Must be >= 1. Default: `2000` |
 | `--safe-defaults` | PATH-stub `format`, `shutdown`, `reg`, `diskpart`, `bcdedit`, `cipher`, `netsh`, `takeown`, `wmic` unless mocked or listed in `allow` |
 | `--no-safe-defaults` | Disable those automatic stubs (CLI default) |
 | `--include-spec-exec` | Also discover `vendor/batch-spec/corpus/exec` when that folder exists. The current batch-spec pin does not ship `corpus/exec`, so this flag is a no-op until that corpus is present |

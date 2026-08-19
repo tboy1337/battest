@@ -44,7 +44,8 @@ function, and region coverage are each at least 90% overall and per file under
 coverage as the branch metric. Install the collector with
 `cargo install cargo-llvm-cov`.
 
-Each logged line is a JSON array of argv strings. Missing sidecar files still
+Each logged line is a JSON array of argv strings, written with one `write_all`
+of the JSON line plus a newline, then `sync_data`. Missing sidecar files still
 mean empty stdout/stderr and exit `0`. Invalid `.exit` content is also treated
 as exit `0`. If a sidecar or call log exists but cannot be read or written
 (permission error, the path is a directory), the stub writes

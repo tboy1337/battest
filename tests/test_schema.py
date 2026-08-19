@@ -1536,3 +1536,30 @@ def test_engine_config_jobs_must_be_in_range() -> None:
     with pytest.raises(ValidationError):
         EngineConfig(jobs=MAX_JOBS + 1)
     assert EngineConfig(jobs=MAX_JOBS).jobs == MAX_JOBS
+
+
+def test_args_reject_cmd_metacharacters() -> None:
+    with pytest.raises(ValidationError, match="metacharacters"):
+        CaseDocument.model_validate(
+            {
+                "description": "bad args",
+                "script": "run.cmd",
+                "args": ["ok", "foo&bar"],
+                "expect": {"exit_code": 0},
+            }
+        )
+    with pytest.raises(ValidationError, match="metacharacters"):
+        ParamOverlay(id="x", args=['a"b'])
+
+
+def test_empty_expect_warns(tmp_path: Path) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    path = tmp_path / "empty.battest.yaml"
+    path.write_text(
+        "description: no assertions\nscript: input.cmd\nexpect: {}\n",
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(path)
+    assert cases[0].warnings
+    assert any("no assertions" in item for item in cases[0].warnings)

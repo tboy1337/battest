@@ -138,48 +138,147 @@ Describe 'Test-BattestArchiveHash.ps1' {
 }
 
 Describe 'Update-BattestUserPath.ps1' {
-    It 'treats PATH membership as case-insensitive and ignores a trailing backslash' {
-        $binPath = 'C:\Users\Test\AppData\Local\Programs\battest\bin'
-        $path = 'c:\users\test\appdata\local\programs\battest\bin\;C:\Windows'
-        $segments = @($path -split ';' | Where-Object { $_ -ne '' })
-        $normalizedBin = $binPath.TrimEnd('\')
-        $already = $false
-        foreach ($seg in $segments) {
-            if ([string]::Equals($seg.TrimEnd('\'), $normalizedBin, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $already = $true
-                break
-            }
+    It 'invokes the fixture and skips a case-insensitive trailing-slash PATH entry' {
+        $fixturePath = Join-Path $script:InstallerPsRoot 'Update-BattestUserPath.ps1'
+        $tempRoot = Join-Path $env:TEMP ('battest-path-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $binPath = Join-Path $tempRoot 'bin'
+        $original = [Environment]::GetEnvironmentVariable('Path', 'User')
+        try {
+            $existing = $binPath.ToLowerInvariant() + '\'
+            [Environment]::SetEnvironmentVariable('Path', "$existing;C:\Windows", 'User')
+            $scriptBody = (Get-Content -LiteralPath $fixturePath -Raw).Replace(
+                '__BATTEST_BIN__', $binPath
+            ).Replace('__BATTEST_TEMP__', $tempRoot)
+            $runner = Join-Path $tempRoot 'run-path.ps1'
+            Set-Content -LiteralPath $runner -Value $scriptBody
+            & $runner
+            $LASTEXITCODE | Should -Be 0
+            $after = [Environment]::GetEnvironmentVariable('Path', 'User')
+            $after | Should -Be "$existing;C:\Windows"
+            Test-Path -LiteralPath "${tempRoot}_session_path.txt" | Should -BeTrue
         }
-        $already | Should -BeTrue
+        finally {
+            [Environment]::SetEnvironmentVariable('Path', $original, 'User')
+            Remove-Item -LiteralPath "${tempRoot}_session_path.txt" -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
-    It 'builds a PATH value that appends the bin directory when absent' {
-        $binPath = 'C:\Test\battest\bin'
-        $path = 'C:\Existing'
-        $segments = @($path -split ';' | Where-Object { $_ -ne '' })
-        $normalizedBin = $binPath.TrimEnd('\')
-        $already = $false
-        foreach ($seg in $segments) {
-            if ([string]::Equals($seg.TrimEnd('\'), $normalizedBin, [System.StringComparison]::OrdinalIgnoreCase)) {
-                $already = $true
-                break
-            }
+    It 'invokes the fixture and appends the bin directory when it is absent' {
+        $fixturePath = Join-Path $script:InstallerPsRoot 'Update-BattestUserPath.ps1'
+        $tempRoot = Join-Path $env:TEMP ('battest-path-add-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $binPath = Join-Path $tempRoot 'bin'
+        $original = [Environment]::GetEnvironmentVariable('Path', 'User')
+        try {
+            [Environment]::SetEnvironmentVariable('Path', 'C:\Existing', 'User')
+            $scriptBody = (Get-Content -LiteralPath $fixturePath -Raw).Replace(
+                '__BATTEST_BIN__', $binPath
+            ).Replace('__BATTEST_TEMP__', $tempRoot)
+            $runner = Join-Path $tempRoot 'run-path.ps1'
+            Set-Content -LiteralPath $runner -Value $scriptBody
+            & $runner
+            $LASTEXITCODE | Should -Be 0
+            $after = [Environment]::GetEnvironmentVariable('Path', 'User')
+            $after | Should -Be "C:\Existing;$binPath"
         }
-        $already | Should -BeFalse
-        $newPath = $path.TrimEnd(';') + ';' + $binPath
-        $newPath | Should -Be 'C:\Existing;C:\Test\battest\bin'
+        finally {
+            [Environment]::SetEnvironmentVariable('Path', $original, 'User')
+            Remove-Item -LiteralPath "${tempRoot}_session_path.txt" -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
 Describe 'Remove-BattestUserPath.ps1' {
-    It 'removes a case-insensitive PATH segment including a trailing backslash' {
-        $binPath = 'C:\Test\battest\bin'
-        $path = 'C:\Alpha;c:\test\battest\bin\;C:\Beta'
-        $segments = @($path -split ';' | Where-Object { $_ -ne '' })
-        $normalizedBin = $binPath.TrimEnd('\')
-        $cmp = [System.StringComparison]::OrdinalIgnoreCase
-        $pathArray = @($segments | Where-Object { -not [string]::Equals($_.TrimEnd('\'), $normalizedBin, $cmp) })
-        $newPath = $pathArray -join ';'
-        $newPath | Should -Be 'C:\Alpha;C:\Beta'
+    It 'invokes the fixture and removes a case-insensitive trailing-slash PATH segment' {
+        $fixturePath = Join-Path $script:InstallerPsRoot 'Remove-BattestUserPath.ps1'
+        $tempRoot = Join-Path $env:TEMP ('battest-path-rm-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $binPath = Join-Path $tempRoot 'bin'
+        $original = [Environment]::GetEnvironmentVariable('Path', 'User')
+        try {
+            [Environment]::SetEnvironmentVariable('Path', "C:\Alpha;$binPath\;C:\Beta", 'User')
+            $scriptBody = (Get-Content -LiteralPath $fixturePath -Raw).Replace(
+                '__BATTEST_BIN__', $binPath
+            )
+            $runner = Join-Path $tempRoot 'run-remove-path.ps1'
+            Set-Content -LiteralPath $runner -Value $scriptBody
+            & $runner
+            $LASTEXITCODE | Should -Be 0
+            $after = [Environment]::GetEnvironmentVariable('Path', 'User')
+            $after | Should -Be 'C:\Alpha;C:\Beta'
+        }
+        finally {
+            [Environment]::SetEnvironmentVariable('Path', $original, 'User')
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'Expand-BattestArchive.ps1' {
+    It 'extracts the versioned Battest layout and rejects zip-slip entries' {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $fixturePath = Join-Path $script:InstallerPsRoot 'Expand-BattestArchive.ps1'
+        $tempRoot = Join-Path $env:TEMP ('battest-expand-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        try {
+            $okZip = Join-Path $tempRoot 'ok.zip'
+            $okArchive = [IO.Compression.ZipFile]::Open($okZip, 'Create')
+            try {
+                $entry = $okArchive.CreateEntry('Battest-v0.1.0/battest.exe')
+                $stream = $entry.Open()
+                try {
+                    $payload = [Text.Encoding]::ASCII.GetBytes('exe')
+                    $stream.Write($payload, 0, $payload.Length)
+                }
+                finally {
+                    $stream.Dispose()
+                }
+            }
+            finally {
+                $okArchive.Dispose()
+            }
+            $okDest = Join-Path $tempRoot 'okdest'
+            $okBody = (Get-Content -LiteralPath $fixturePath -Raw).Replace(
+                '__BATTEST_TEMP__', $okDest
+            ).Replace('__BATTEST_VERSION__', 'v0.1.0')
+            $okRunner = Join-Path $tempRoot 'run-ok-expand.ps1'
+            Set-Content -LiteralPath $okRunner -Value $okBody
+            Copy-Item -LiteralPath $okZip -Destination "$okDest.zip"
+            & $okRunner
+            $LASTEXITCODE | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $okDest 'Battest-v0.1.0\battest.exe') | Should -BeTrue
+
+            $slipZip = Join-Path $tempRoot 'slip.zip'
+            $slipArchive = [IO.Compression.ZipFile]::Open($slipZip, 'Create')
+            try {
+                $entry = $slipArchive.CreateEntry('../evil.exe')
+                $stream = $entry.Open()
+                try {
+                    $payload = [Text.Encoding]::ASCII.GetBytes('evil')
+                    $stream.Write($payload, 0, $payload.Length)
+                }
+                finally {
+                    $stream.Dispose()
+                }
+            }
+            finally {
+                $slipArchive.Dispose()
+            }
+            $slipDest = Join-Path $tempRoot 'slipdest'
+            $slipBody = (Get-Content -LiteralPath $fixturePath -Raw).Replace(
+                '__BATTEST_TEMP__', $slipDest
+            ).Replace('__BATTEST_VERSION__', 'v0.1.0')
+            $slipRunner = Join-Path $tempRoot 'run-slip-expand.ps1'
+            Set-Content -LiteralPath $slipRunner -Value $slipBody
+            Copy-Item -LiteralPath $slipZip -Destination "$slipDest.zip"
+            & $slipRunner
+            $LASTEXITCODE | Should -Be 1
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }

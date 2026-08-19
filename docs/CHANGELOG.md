@@ -5,6 +5,33 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-08-19
+
+Production audit: Job Object isolation, output caps, Trusted Publishing, and
+installer/Action hardening.
+
+- Windows cases run inside a Job Object (`KILL_ON_JOB_CLOSE`). `cmd.exe` is
+  started suspended, assigned, then resumed. Capture is capped at 10 MiB per
+  stream. Abandoned processes cannot be a clean PASS. A `%CD%` outside the
+  workdir is a warning, not a fail.
+- Fixture `args` reject cmd metacharacters (`"&|<>^` and newlines). Host
+  `BATTEST_*` is still stripped; wrapper dumps keep fixture `BATTEST_*` except
+  `BATTEST_RC`. File matchers default to UTF-8 and exact newlines.
+- Regex matchers run in a killed worker with a 2-second bound. JUnit write
+  failures after a FAIL run return exit 1. The PATH-mock stub writes each call
+  log line with one `write_all` then `sync_data`.
+- The installer requires `Battest-<tag>\battest.exe`, refuses zip-slip
+  entries, and propagates bootstrap ERRORLEVEL after deleting the downloaded
+  `.cmd`. Session PATH is deduped like user PATH. The Action passes `--`
+  before `path`.
+- CI release concurrency is `battest-release` (`cancel-in-progress: false`).
+  `workflow_dispatch` has `force` (default false) and does not rewrite an
+  existing GitHub tag unless forced. When the version tag already exists, CI
+  still publishes wheels to PyPI with skip-existing. PyPI uses Trusted
+  Publishing (`pypa/gh-action-pypi-publish@release/v1`, environment `pypi`).
+  `build-windows` smokes `battest.exe` before zipping; package-smoke imports
+  the wheel.
+
 ## [1.0.5] - 2026-08-19
 
 Production audit: timeout-budget spawn, installer PATH matching, YAML alias
@@ -139,6 +166,7 @@ Rust stub helper.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
+[1.0.6]: https://github.com/tboy1337/battest/releases/tag/v1.0.6
 [1.0.5]: https://github.com/tboy1337/battest/releases/tag/v1.0.5
 [1.0.4]: https://github.com/tboy1337/battest/releases/tag/v1.0.4
 [1.0.3]: https://github.com/tboy1337/battest/releases/tag/v1.0.3

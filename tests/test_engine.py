@@ -10,30 +10,29 @@ import time
 import pytest
 from pytest_mock import MockerFixture
 
-from battest.constants import TEARDOWN_MIN_SECONDS, WRAPPER_NAME
+from battest.constants import (
+    CWD_DUMP_NAME,
+    MAX_CAPTURE_BYTES,
+    TEARDOWN_MIN_SECONDS,
+    WRAPPER_NAME,
+)
 from battest.encoding import console_encoding, decode_output
 from battest.engine import (
     EngineError,
-    _close_process_streams,
     _combined_env,
     _evaluate_after_run,
     _prepare_work_dir,
     _run_process,
     _script_warnings,
     _seed_work_dir,
-    abandon_lingering_process,
     build_cmd_line,
     build_wrapper_text,
-    cmd_executable,
     collapse_path_keys,
-    drain_after_timeout,
     execute_case,
     execute_cases,
-    kill_process_tree,
     remaining_timeout,
     require_windows,
     resolved_timeout,
-    system32_executable,
     teardown_timeout,
     wrapper_sut_relative,
 )
@@ -46,6 +45,22 @@ from battest.models import (
     Outcome,
     OutputMatcher,
     RunResult,
+)
+from battest.process import (
+    ProcessResult,
+    _assign_and_resume,
+    _close_job,
+    _create_kill_on_close_job,
+    _read_capped_stream,
+    _write_stdin,
+    abandon_lingering_process,
+    close_process_streams,
+    cmd_executable,
+    coerce_process_result,
+    drain_after_timeout,
+    is_path_outside_directory,
+    kill_process_tree,
+    system32_executable,
 )
 from battest.schema import load_cases_from_path
 
@@ -76,15 +91,23 @@ def test_console_encoding_code_pages(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
 
     class FakeKernel:
-        def __init__(self, code_page: int) -> None:
+        def __init__(self, code_page: int, oem: int = 0, acp: int = 0) -> None:
             self._code_page = code_page
+            self._oem = oem
+            self._acp = acp
 
         def GetConsoleOutputCP(self) -> int:
             return self._code_page
 
+        def GetOEMCP(self) -> int:
+            return self._oem
+
+        def GetACP(self) -> int:
+            return self._acp
+
     class FakeCtypes:
-        def __init__(self, code_page: int) -> None:
-            self.windll = type("W", (), {"kernel32": FakeKernel(code_page)})()
+        def __init__(self, code_page: int, oem: int = 0, acp: int = 0) -> None:
+            self.windll = type("W", (), {"kernel32": FakeKernel(code_page, oem, acp)})()
 
     monkeypatch.setattr("battest.encoding.ctypes", FakeCtypes(437))
     assert console_encoding() == "cp437"
@@ -92,6 +115,10 @@ def test_console_encoding_code_pages(monkeypatch: pytest.MonkeyPatch) -> None:
     assert console_encoding() == "utf-8"
     monkeypatch.setattr("battest.encoding.ctypes", FakeCtypes(0))
     assert console_encoding() == "utf-8"
+    monkeypatch.setattr("battest.encoding.ctypes", FakeCtypes(0, oem=437))
+    assert console_encoding() == "cp437"
+    monkeypatch.setattr("battest.encoding.ctypes", FakeCtypes(0, oem=0, acp=1252))
+    assert console_encoding() == "cp1252"
 
 
 def test_console_encoding_without_windll(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -404,7 +431,7 @@ def test_kill_process_tree_invokes_taskkill(mocker: MockerFixture) -> None:
         timeouts.append(kwargs.get("timeout"))
         return subprocess.CompletedProcess(command, 0)
 
-    mocker.patch("battest.engine.subprocess.run", fake_run)
+    mocker.patch("battest.process.subprocess.run", fake_run)
     kill_process_tree(1234)
     assert Path(seen[0][0]).name.lower() in {"taskkill", "taskkill.exe"}
     assert seen[0][1:4] == ["/F", "/T", "/PID"]
@@ -422,8 +449,8 @@ def test_kill_process_tree_logs_nonzero_return(
             command, 1, stdout="", stderr="Access denied"
         )
 
-    mocker.patch("battest.engine.subprocess.run", fake_run)
-    with caplog.at_level("WARNING", logger="battest.engine"):
+    mocker.patch("battest.process.subprocess.run", fake_run)
+    with caplog.at_level("WARNING", logger="battest.process"):
         kill_process_tree(55)
     assert "returned 1" in caplog.text
     assert "Access denied" in caplog.text
@@ -435,8 +462,8 @@ def test_kill_process_tree_timeout_is_logged(
     def fake_run(*_args: object, **_kwargs: object) -> None:
         raise subprocess.TimeoutExpired(cmd="taskkill", timeout=1)
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    with caplog.at_level("ERROR", logger="battest.engine"):
+    monkeypatch.setattr("battest.process.subprocess.run", fake_run)
+    with caplog.at_level("ERROR", logger="battest.process"):
         kill_process_tree(99)
     assert "taskkill timed out" in caplog.text
 
@@ -1161,20 +1188,43 @@ def test_teardown_failure_keeps_fail_outcome(
 def test_run_process_success_and_timeout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    class OkProcess:
+    class OkStdin:
+        def write(self, data: bytes) -> int:
+            assert data == b"hi"
+            return len(data)
+
+        def flush(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class OnceReader:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+            self._sent = False
+
+        def read(self, _size: int = -1) -> bytes:
+            if self._sent:
+                return b""
+            self._sent = True
+            return self._payload
+
+        def close(self) -> None:
+            return None
+
+    class OkProcessFixed:
         pid = 7
         returncode = 3
-        stdin = None
-        stdout = None
-        stderr = None
 
         def __init__(self, *args: object, **kwargs: object) -> None:
-            return None
+            self.stdin = OkStdin()
+            self.stdout = OnceReader(b"out")
+            self.stderr = OnceReader(b"err")
 
         def communicate(
             self, input: bytes | None = None, timeout: float | None = None
         ) -> tuple[bytes, bytes]:
-            assert input == b"hi"
             return b"out", b"err"
 
         def poll(self) -> int | None:
@@ -1186,25 +1236,22 @@ def test_run_process_success_and_timeout(
         def kill(self) -> None:
             return None
 
-    monkeypatch.setattr("battest.engine.subprocess.Popen", OkProcess)
-    exit_code, stdout, stderr, timed_out = _run_process(
-        ["cmd"], tmp_path, {}, "hi", 1.0, "utf-8"
-    )
-    assert exit_code == 3
-    assert stdout == "out"
-    assert stderr == "err"
-    assert timed_out is False
+    monkeypatch.setattr("battest.process.subprocess.Popen", OkProcessFixed)
+    result = _run_process(["cmd"], tmp_path, {}, "hi", 1.0, "utf-8")
+    assert result.exit_code == 3
+    assert result.stdout == "out"
+    assert result.stderr == "err"
+    assert result.timed_out is False
 
     class TimeoutProcess:
         pid = None
         returncode = None
-        stdin = None
-        stdout = None
-        stderr = None
         waited: list[float | None] = []
 
         def __init__(self, *args: object, **kwargs: object) -> None:
-            return None
+            self.stdin = OkStdin()
+            self.stdout = OnceReader(b"")
+            self.stderr = OnceReader(b"")
 
         def communicate(
             self, input: bytes | None = None, timeout: float | None = None
@@ -1222,16 +1269,14 @@ def test_run_process_success_and_timeout(
             return None
 
     killed: list[int] = []
-    monkeypatch.setattr("battest.engine.subprocess.Popen", TimeoutProcess)
-    monkeypatch.setattr("battest.engine.kill_process_tree", killed.append)
+    monkeypatch.setattr("battest.process.subprocess.Popen", TimeoutProcess)
+    monkeypatch.setattr("battest.process.kill_process_tree", killed.append)
     monkeypatch.setattr(
-        "battest.engine.drain_after_timeout", lambda _proc, _timeout: (b"", b"")
+        "battest.process.drain_after_timeout", lambda _proc, _timeout: (b"", b"")
     )
-    exit_code, stdout, stderr, timed_out = _run_process(
-        ["cmd"], tmp_path, {}, "", 0.1, "utf-8"
-    )
-    assert timed_out is True
-    assert exit_code == -1
+    result = _run_process(["cmd"], tmp_path, {}, "", 0.1, "utf-8")
+    assert result.timed_out is True
+    assert result.exit_code == -1
     assert killed == []
     assert TimeoutProcess.waited
 
@@ -1246,14 +1291,12 @@ def test_run_process_does_not_spawn_when_timeout_already_expired(
             spawned.append(args)
             raise AssertionError("Popen must not run when timeout is already expired")
 
-    monkeypatch.setattr("battest.engine.subprocess.Popen", BoomProcess)
-    exit_code, stdout, stderr, timed_out = _run_process(
-        ["cmd"], tmp_path, {}, "", 0.0, "utf-8"
-    )
-    assert timed_out is True
-    assert exit_code == -1
-    assert stdout == ""
-    assert stderr == ""
+    monkeypatch.setattr("battest.process.subprocess.Popen", BoomProcess)
+    result = _run_process(["cmd"], tmp_path, {}, "", 0.0, "utf-8")
+    assert result.timed_out is True
+    assert result.exit_code == -1
+    assert result.stdout == ""
+    assert result.stderr == ""
     assert spawned == []
 
 
@@ -1269,7 +1312,7 @@ def test_execute_case_times_out_without_spawning_when_budget_already_gone(
         spawned.append(args)
         raise AssertionError("Popen must not run when the case budget is gone")
 
-    monkeypatch.setattr("battest.engine.subprocess.Popen", track_popen)
+    monkeypatch.setattr("battest.process.subprocess.Popen", track_popen)
     script = tmp_path / "run.cmd"
     script.write_text("@echo off\n", encoding="utf-8")
     case = Case(
@@ -1296,7 +1339,7 @@ def test_execute_case_setup_timeout_does_not_spawn_when_budget_gone(
         spawned.append(args)
         raise AssertionError("Popen must not run when the case budget is gone")
 
-    monkeypatch.setattr("battest.engine.subprocess.Popen", track_popen)
+    monkeypatch.setattr("battest.process.subprocess.Popen", track_popen)
     script = tmp_path / "run.cmd"
     script.write_text("@echo off\n", encoding="utf-8")
     setup = tmp_path / "setup.cmd"
@@ -1329,8 +1372,8 @@ def test_run_process_errors_when_stdin_cannot_encode(
             spawned.append(args)
             raise AssertionError("Popen must not run when stdin cannot encode")
 
-    monkeypatch.setattr("battest.engine.subprocess.Popen", BoomProcess)
-    with caplog.at_level("ERROR", logger="battest.engine"):
+    monkeypatch.setattr("battest.process.subprocess.Popen", BoomProcess)
+    with caplog.at_level("ERROR", logger="battest.process"):
         with pytest.raises(UnicodeEncodeError):
             _run_process(["cmd"], tmp_path, {}, "café", 1.0, "ascii")
     assert "cannot be encoded" in caplog.text
@@ -1348,7 +1391,7 @@ def test_execute_case_errors_when_stdin_cannot_encode(
         spawned.append(args)
         raise AssertionError("Popen must not run when stdin cannot encode")
 
-    monkeypatch.setattr("battest.engine.subprocess.Popen", track_popen)
+    monkeypatch.setattr("battest.process.subprocess.Popen", track_popen)
     script = tmp_path / "run.cmd"
     script.write_text("@echo off\n", encoding="utf-8")
     case = Case(
@@ -1478,7 +1521,7 @@ def test_execute_case_setup_timeout_and_env_dump(
         if calls["n"] == 1:
             return 0, "", "", False
         (cwd / "_battest_env.txt").write_text(
-            "FOO=bar\nBATTEST_X=1\n", encoding="utf-8"
+            "FOO=bar\nBATTEST_X=1\nBATTEST_RC=0\n", encoding="utf-8"
         )
         return 0, "ok", "", True
 
@@ -1487,7 +1530,8 @@ def test_execute_case_setup_timeout_and_env_dump(
     timed = execute_case(case, EngineConfig())
     assert timed.outcome == Outcome.TIMEOUT
     assert timed.env["FOO"] == "bar"
-    assert "BATTEST_X" not in timed.env
+    assert timed.env["BATTEST_X"] == "1"
+    assert "BATTEST_RC" not in timed.env
 
 
 def test_setup_sut_teardown_share_one_deadline(
@@ -1579,7 +1623,7 @@ def test_abandon_lingering_process_bounded_wait(
             return b"", b""
 
     zombie = Zombie()
-    with caplog.at_level("ERROR", logger="battest.engine"):
+    with caplog.at_level("ERROR", logger="battest.process"):
         abandon_lingering_process(zombie)
     assert zombie.killed is True
     assert "abandoning still-alive" in caplog.text
@@ -1687,6 +1731,7 @@ def test_build_wrapper_text_uses_dp0() -> None:
     text = build_wrapper_text("sub\\run.cmd")
     assert "%~dp0sub\\run.cmd" in text
     assert "%~dp0_battest_env.txt" in text
+    assert f"%~dp0{CWD_DUMP_NAME}" in text
     assert "BATTEST_RC" in text
     assert "_bt_env" not in text
 
@@ -1728,6 +1773,449 @@ def test_close_process_streams_oserror(caplog: pytest.LogCaptureFixture) -> None
         stdout = BoomStream()
         stderr = None
 
-    with caplog.at_level("DEBUG", logger="battest.engine"):
-        _close_process_streams(Proc())
+    with caplog.at_level("DEBUG", logger="battest.process"):
+        close_process_streams(Proc())
     assert "failed to close process stream" in caplog.text
+
+
+def test_is_path_outside_directory(tmp_path: Path) -> None:
+    inside = tmp_path / "work"
+    inside.mkdir()
+    assert is_path_outside_directory(str(inside), inside) is False
+    assert is_path_outside_directory(str(inside / "child"), inside) is False
+    assert is_path_outside_directory(str(tmp_path / "other"), inside) is True
+    assert is_path_outside_directory("", inside) is False
+
+
+def test_cwd_outside_workdir_appends_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+
+    def fake_run(
+        _command: list[str],
+        cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> tuple[int, str, str, bool]:
+        (cwd / CWD_DUMP_NAME).write_text("C:\\Windows\n", encoding="utf-8")
+        return 0, "", "", False
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.PASS
+    assert any("changed directory" in item for item in result.warnings)
+
+
+def test_overflowed_output_is_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> ProcessResult:
+        return ProcessResult(
+            0,
+            "x" * 20,
+            "",
+            False,
+            overflowed=True,
+            pid=42,
+        )
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert (
+        "capture" in result.error_message.lower()
+        or "byte limit" in result.error_message
+    )
+
+
+def test_abandoned_process_is_not_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> ProcessResult:
+        return ProcessResult(0, "ok", "", False, abandoned=True, pid=99)
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert any("abandoned" in item for item in result.warnings)
+
+
+def test_run_process_caps_stream_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class QuietStdin:
+        def write(self, data: bytes) -> int:
+            return len(data)
+
+        def flush(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class OnceReader:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+            self._sent = False
+
+        def read(self, _size: int = -1) -> bytes:
+            if self._sent:
+                return b""
+            self._sent = True
+            return self._payload
+
+        def close(self) -> None:
+            return None
+
+    class FloodProcess:
+        pid = 11
+        returncode = 0
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.stdin = QuietStdin()
+            self.stdout = OnceReader(b"x" * 50)
+            self.stderr = OnceReader(b"")
+
+        def communicate(
+            self, input: bytes | None = None, timeout: float | None = None
+        ) -> tuple[bytes, bytes]:
+            return b"", b""
+
+        def poll(self) -> int | None:
+            return 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            return None
+
+        def __enter__(self) -> FloodProcess:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    def fake_taskkill(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(["taskkill"], 0, "", "")
+
+    monkeypatch.setattr("battest.process.subprocess.Popen", FloodProcess)
+    monkeypatch.setattr("battest.process.subprocess.run", fake_taskkill)
+    from battest.process import run_process as run_proc
+
+    result = run_proc(["cmd"], tmp_path, {}, "", 1.0, "utf-8", max_bytes=10)
+    assert result.overflowed is True
+    assert len(result.stdout.encode("utf-8")) <= 10
+
+
+@pytest.mark.windows
+def test_timeout_does_not_abandon_when_job_kills_tree(tmp_path: Path) -> None:
+    script = tmp_path / "run.cmd"
+    script.write_text(
+        "@echo off\r\nping -n 30 127.0.0.1 >nul\r\nexit /b 0\r\n", encoding="utf-8"
+    )
+    manifest = tmp_path / "run.battest.yaml"
+    manifest.write_text(
+        "description: long ping\nscript: run.cmd\ntimeout_seconds: 1\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    from battest.schema import load_cases_from_path
+
+    case = load_cases_from_path(manifest)[0]
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.TIMEOUT
+    assert not any("abandoned still-alive" in item for item in result.warnings)
+    assert MAX_CAPTURE_BYTES >= 1
+
+
+def test_coerce_process_result_rejects_unexpected_shapes() -> None:
+    good = ProcessResult(0, "a", "b", False)
+    assert coerce_process_result(good) is good
+    coerced = coerce_process_result((2, "out", "err", True))
+    assert coerced.exit_code == 2
+    assert coerced.timed_out is True
+    with pytest.raises(TypeError, match="unexpected process result"):
+        coerce_process_result("nope")
+    with pytest.raises(TypeError, match="unexpected process result"):
+        coerce_process_result((1, "a", "b"))
+    with pytest.raises(TypeError, match="unexpected process result"):
+        coerce_process_result((1, "a", "b", "no"))
+
+
+def test_drain_after_timeout_oserror_returns_empty() -> None:
+    class Closed:
+        def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
+            raise OSError("already closed")
+
+    assert drain_after_timeout(Closed(), 0.1) == (b"", b"")
+
+
+def test_abandon_lingering_process_true_when_poll_stays_none() -> None:
+    class Zombie:
+        def poll(self) -> int | None:
+            return None
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    assert abandon_lingering_process(Zombie()) is True
+
+
+def test_close_process_streams_skips_none_and_oserror() -> None:
+    class Boom:
+        def close(self) -> None:
+            raise OSError("busy")
+
+    class FakePopen:
+        stdin = None
+        stdout = Boom()
+        stderr = None
+
+    close_process_streams(FakePopen())
+
+
+def test_write_stdin_handles_none_payload_and_oserror() -> None:
+    _write_stdin(None, b"x")
+
+    class BoomStream:
+        def write(self, _data: bytes) -> int:
+            raise OSError("pipe")
+
+        def flush(self) -> None:
+            return None
+
+        def close(self) -> None:
+            raise OSError("close")
+
+    _write_stdin(BoomStream(), b"payload")
+
+
+def test_read_capped_stream_overflow_and_oserror() -> None:
+    class Chunked:
+        def __init__(self) -> None:
+            self._reads = 0
+
+        def read(self, _size: int = -1) -> bytes:
+            self._reads += 1
+            if self._reads == 1:
+                return b"abcdef"
+            if self._reads == 2:
+                return b"more"
+            if self._reads == 3:
+                raise OSError("broken")
+            return b""
+
+    chunks: list[bytes] = []
+    overflow = [False]
+    _read_capped_stream(Chunked(), 3, chunks, overflow)
+    assert overflow[0] is True
+    assert b"".join(chunks) == b"abc"
+
+    class ExactThenMore:
+        def __init__(self) -> None:
+            self._reads = 0
+
+        def read(self, _size: int = -1) -> bytes:
+            self._reads += 1
+            if self._reads == 1:
+                return b"abc"
+            if self._reads == 2:
+                return b"z"
+            return b""
+
+    exact_chunks: list[bytes] = []
+    exact_overflow = [False]
+    _read_capped_stream(ExactThenMore(), 3, exact_chunks, exact_overflow)
+    assert exact_overflow[0] is True
+    assert b"".join(exact_chunks) == b"abc"
+
+
+def test_job_helpers_when_windll_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("battest.process.ctypes_windll", lambda: None)
+    assert _create_kill_on_close_job() is None
+    _assign_and_resume(object(), 1)
+    _close_job(1)
+
+
+def test_job_create_and_assign_failure_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Kernel:
+        def CreateJobObjectW(self, *_args: object) -> int:
+            return 0
+
+        def SetInformationJobObject(self, *_args: object) -> int:
+            return 0
+
+        def CloseHandle(self, *_args: object) -> int:
+            return 0
+
+        def AssignProcessToJobObject(self, *_args: object) -> int:
+            return 0
+
+    class Windll:
+        kernel32 = Kernel()
+
+    monkeypatch.setattr("battest.process.ctypes_windll", lambda: Windll())
+    assert _create_kill_on_close_job() is None
+
+    class SetFailKernel(Kernel):
+        def CreateJobObjectW(self, *_args: object) -> int:
+            return 9
+
+    class SetFailWindll:
+        kernel32 = SetFailKernel()
+
+    monkeypatch.setattr("battest.process.ctypes_windll", lambda: SetFailWindll())
+    assert _create_kill_on_close_job() is None
+
+    class CloseFailWindll:
+        kernel32 = Kernel()
+
+    monkeypatch.setattr("battest.process.ctypes_windll", lambda: CloseFailWindll())
+    _close_job(5)
+
+    class Process:
+        pid = 4
+        _handle = 11
+
+    class Ntdll:
+        def NtResumeProcess(self, *_args: object) -> int:
+            return 1
+
+    monkeypatch.setattr("battest.process.ctypes.WinDLL", lambda _name: Ntdll())
+    monkeypatch.setattr("battest.process.ctypes_windll", lambda: Windll())
+    _assign_and_resume(Process(), 7)
+
+
+def test_run_process_keeps_truncated_extra_drain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class QuietStdin:
+        def write(self, data: bytes) -> int:
+            return len(data)
+
+        def flush(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class OnceReader:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+            self._sent = False
+
+        def read(self, _size: int = -1) -> bytes:
+            if self._sent:
+                return b""
+            self._sent = True
+            return self._payload
+
+        def close(self) -> None:
+            return None
+
+    class AliveThenDead:
+        pid = 21
+        returncode: int | None = None
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.stdin = QuietStdin()
+            self.stdout = OnceReader(b"x" * 50)
+            self.stderr = OnceReader(b"y" * 50)
+            self._polls = 0
+
+        def communicate(
+            self, input: bytes | None = None, timeout: float | None = None
+        ) -> tuple[bytes, bytes]:
+            return b"EXTRAOUT", b"EXTRAERR"
+
+        def poll(self) -> int | None:
+            self._polls += 1
+            if self._polls < 8:
+                return None
+            self.returncode = 1
+            return 1
+
+        def wait(self, timeout: float | None = None) -> int:
+            self.returncode = 1
+            return 1
+
+        def kill(self) -> None:
+            return None
+
+        def __enter__(self) -> AliveThenDead:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr("battest.process.subprocess.Popen", AliveThenDead)
+    monkeypatch.setattr(
+        "battest.process.subprocess.run",
+        lambda *_a, **_k: subprocess.CompletedProcess(["taskkill"], 0, "", ""),
+    )
+    monkeypatch.setattr("battest.process._create_kill_on_close_job", lambda: None)
+    from battest.process import run_process as run_proc
+
+    result = run_proc(["cmd"], tmp_path, {}, "", 2.0, "utf-8", max_bytes=4)
+    assert result.overflowed is True
+    assert len(result.stdout.encode("utf-8")) <= 4
+    assert len(result.stderr.encode("utf-8")) <= 4

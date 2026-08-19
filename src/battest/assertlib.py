@@ -20,6 +20,7 @@ from battest.models import (
     OutputMatcher,
     is_rooted_path,
 )
+from battest.retimeout import RegexTimeoutError, search_with_timeout
 
 LOGGER = get_logger("assertlib")
 
@@ -39,8 +40,10 @@ def unified_diff_text(expected: str, actual: str, max_diff: int) -> str:
     return rendered
 
 
-def apply_newline_mode(text: str, mode: NewlineMode) -> str:
+def apply_newline_mode(text: str, mode: NewlineMode | None) -> str:
     """Normalize newlines according to matcher mode."""
+    if mode is None:
+        return text
     match mode:
         case NewlineMode.AUTO | NewlineMode.LF:
             return text.replace("\r\n", "\n").replace("\r", "\n")
@@ -51,8 +54,10 @@ def apply_newline_mode(text: str, mode: NewlineMode) -> str:
             raise ValueError(f"unhandled newline mode: {unreachable}")
 
 
-def newline_requirement_failure(actual: str, mode: NewlineMode) -> str | None:
+def newline_requirement_failure(actual: str, mode: NewlineMode | None) -> str | None:
     """Return a failure message when actual line endings violate mode."""
+    if mode is None:
+        return None
     match mode:
         case NewlineMode.AUTO:
             return None
@@ -77,12 +82,18 @@ def confined_source_path(source_dir: Path, relative: str) -> Path | None:
     return confined_work_path(source_dir, relative)
 
 
+def _read_text_exact(path: Path, encoding: str) -> str:
+    """Read a text file without translating newlines."""
+    with path.open(encoding=encoding, newline="") as handle:
+        return handle.read()
+
+
 def _read_equals_file(source_dir: Path, relative: str) -> tuple[str | None, str | None]:
     path = confined_source_path(source_dir, relative)
     if path is None:
         return None, f"equals_file escapes source directory: {relative}"
     try:
-        return path.read_text(encoding="utf-8"), None
+        return _read_text_exact(path, "utf-8"), None
     except FileNotFoundError:
         LOGGER.error("equals_file missing %s", path)
         return None, f"equals_file not found: {relative}"
@@ -147,8 +158,27 @@ def match_output(
     requirement = newline_requirement_failure(actual, matcher.newline)
     if requirement is not None:
         failures.append(_fail(stream_name, f"{stream_name} {requirement}"))
+    failures.extend(_match_empty(stream_name, matcher, actual, actual_cmp, max_diff))
+    failures.extend(_match_equals(stream_name, matcher, actual, actual_cmp, max_diff))
+    failures.extend(
+        _match_equals_file(
+            stream_name, matcher, actual, actual_cmp, source_dir, max_diff
+        )
+    )
+    failures.extend(_match_contains(stream_name, matcher, actual, actual_cmp, max_diff))
+    failures.extend(_match_regex(stream_name, matcher, actual, actual_cmp, max_diff))
+    return failures
+
+
+def _match_empty(
+    stream_name: str,
+    matcher: OutputMatcher,
+    actual: str,
+    actual_cmp: str,
+    max_diff: int,
+) -> list[AssertionFailure]:
     if matcher.empty is True and actual_cmp.strip() != "":
-        failures.append(
+        return [
             _fail(
                 stream_name,
                 f"{stream_name} was not empty",
@@ -157,95 +187,146 @@ def match_output(
                 diff=unified_diff_text("", actual_cmp, max_diff),
                 max_diff=max_diff,
             )
-        )
+        ]
     if matcher.empty is False and actual_cmp.strip() == "":
-        failures.append(_fail(stream_name, f"{stream_name} was empty"))
-    if matcher.equals is not None:
-        expected_cmp = apply_newline_mode(matcher.equals, matcher.newline)
-        if actual_cmp != expected_cmp:
-            failures.append(
-                _fail(
-                    stream_name,
-                    f"{stream_name} did not equal expected text",
-                    expected=matcher.equals,
-                    actual=actual,
-                    diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
-                    max_diff=max_diff,
-                )
+        return [_fail(stream_name, f"{stream_name} was empty")]
+    return []
+
+
+def _match_equals(
+    stream_name: str,
+    matcher: OutputMatcher,
+    actual: str,
+    actual_cmp: str,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    if matcher.equals is None:
+        return []
+    expected_cmp = apply_newline_mode(matcher.equals, matcher.newline)
+    if actual_cmp == expected_cmp:
+        return []
+    return [
+        _fail(
+            stream_name,
+            f"{stream_name} did not equal expected text",
+            expected=matcher.equals,
+            actual=actual,
+            diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+            max_diff=max_diff,
+        )
+    ]
+
+
+def _match_equals_file(
+    stream_name: str,
+    matcher: OutputMatcher,
+    actual: str,
+    actual_cmp: str,
+    source_dir: Path,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    if matcher.equals_file is None:
+        return []
+    expected_text, error = _read_equals_file(source_dir, matcher.equals_file)
+    if error is not None:
+        return [
+            _fail(
+                stream_name,
+                f"{stream_name} {error}",
+                expected=matcher.equals_file,
+                max_diff=max_diff,
             )
-    if matcher.equals_file is not None:
-        expected_text, error = _read_equals_file(source_dir, matcher.equals_file)
-        if error is not None:
-            failures.append(
-                _fail(
-                    stream_name,
-                    f"{stream_name} {error}",
-                    expected=matcher.equals_file,
-                    max_diff=max_diff,
-                )
+        ]
+    if expected_text is None:
+        return [
+            _fail(
+                stream_name,
+                f"{stream_name} equals_file produced no text: "
+                f"{matcher.equals_file}",
+                expected=matcher.equals_file,
+                max_diff=max_diff,
             )
-        else:
-            if expected_text is None:
-                failures.append(
-                    _fail(
-                        stream_name,
-                        f"{stream_name} equals_file produced no text: "
-                        f"{matcher.equals_file}",
-                        expected=matcher.equals_file,
-                        max_diff=max_diff,
-                    )
-                )
-            else:
-                expected_cmp = apply_newline_mode(expected_text, matcher.newline)
-                if actual_cmp != expected_cmp:
-                    failures.append(
-                        _fail(
-                            stream_name,
-                            f"{stream_name} did not equal file {matcher.equals_file}",
-                            expected=expected_text,
-                            actual=actual,
-                            diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
-                            max_diff=max_diff,
-                        )
-                    )
-    if matcher.contains is not None:
-        needle = apply_newline_mode(matcher.contains, matcher.newline)
-        if needle not in actual_cmp:
-            failures.append(
-                _fail(
-                    stream_name,
-                    f"{stream_name} did not contain expected text",
-                    expected=matcher.contains,
-                    actual=actual,
-                    max_diff=max_diff,
-                )
+        ]
+    expected_cmp = apply_newline_mode(expected_text, matcher.newline)
+    if actual_cmp == expected_cmp:
+        return []
+    return [
+        _fail(
+            stream_name,
+            f"{stream_name} did not equal file {matcher.equals_file}",
+            expected=expected_text,
+            actual=actual,
+            diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+            max_diff=max_diff,
+        )
+    ]
+
+
+def _match_contains(
+    stream_name: str,
+    matcher: OutputMatcher,
+    actual: str,
+    actual_cmp: str,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    if matcher.contains is None:
+        return []
+    needle = apply_newline_mode(matcher.contains, matcher.newline)
+    if needle in actual_cmp:
+        return []
+    return [
+        _fail(
+            stream_name,
+            f"{stream_name} did not contain expected text",
+            expected=matcher.contains,
+            actual=actual,
+            max_diff=max_diff,
+        )
+    ]
+
+
+def _match_regex(
+    stream_name: str,
+    matcher: OutputMatcher,
+    actual: str,
+    actual_cmp: str,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    if matcher.regex is None:
+        return []
+    try:
+        matched = search_with_timeout(matcher.regex, actual_cmp)
+    except re.error as exc:
+        return [
+            _fail(
+                stream_name,
+                f"{stream_name} invalid regex: {exc}",
+                expected=matcher.regex,
+                actual=actual,
+                max_diff=max_diff,
             )
-    if matcher.regex is not None:
-        pattern = matcher.regex
-        try:
-            matched = re.search(pattern, actual_cmp, re.MULTILINE)
-        except re.error as exc:
-            failures.append(
-                _fail(
-                    stream_name,
-                    f"{stream_name} invalid regex: {exc}",
-                    expected=matcher.regex,
-                    actual=actual,
-                    max_diff=max_diff,
-                )
+        ]
+    except RegexTimeoutError as exc:
+        return [
+            _fail(
+                stream_name,
+                f"{stream_name} {exc}",
+                expected=matcher.regex,
+                actual=actual,
+                max_diff=max_diff,
             )
-        else:
-            if matched is None:
-                failures.append(
-                    _fail(
-                        stream_name,
-                        f"{stream_name} did not match regex",
-                        expected=matcher.regex,
-                        actual=actual,
-                        max_diff=max_diff,
-                    )
-                )
-    return failures
+        ]
+    if matched:
+        return []
+    return [
+        _fail(
+            stream_name,
+            f"{stream_name} did not match regex",
+            expected=matcher.regex,
+            actual=actual,
+            max_diff=max_diff,
+        )
+    ]
 
 
 def match_exit_code(expected: int | None, actual: int | None) -> list[AssertionFailure]:
@@ -322,93 +403,158 @@ def match_files(
                 _fail("files", f"path escapes work directory: {matcher.path}")
             )
             continue
-        exists = path.is_file() or path.is_dir()
-        missing = matcher.exists is False or matcher.not_exists is True
-        if matcher.exists is True and not exists:
-            failures.append(_fail("files", f"expected path to exist: {matcher.path}"))
-        if missing and exists:
-            failures.append(
-                _fail("files", f"expected path to be absent: {matcher.path}")
-            )
-        if (
-            matcher.contains is not None
-            or matcher.equals is not None
-            or matcher.equals_file is not None
-        ):
-            if not path.is_file():
-                failures.append(
-                    _fail("files", f"file not found for content check: {matcher.path}")
-                )
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError as exc:
-                LOGGER.error("file is not utf-8 %s: %s", path, exc)
-                failures.append(
-                    _fail(
-                        "files",
-                        f"file {matcher.path} is not valid utf-8: {exc}",
-                    )
-                )
-                continue
-            except OSError as exc:
-                LOGGER.error("failed to read %s: %s", path, exc)
-                failures.append(
-                    _fail(
-                        "files",
-                        f"failed to read {matcher.path} for content check: {exc}",
-                    )
-                )
-                continue
-            if matcher.contains is not None and matcher.contains not in text:
-                failures.append(
-                    _fail(
-                        "files",
-                        f"file {matcher.path} did not contain expected text",
-                        expected=matcher.contains,
-                        actual=text,
-                        max_diff=max_diff,
-                    )
-                )
-            if matcher.equals is not None and text != matcher.equals:
-                failures.append(
-                    _fail(
-                        "files",
-                        f"file {matcher.path} content mismatch",
-                        expected=matcher.equals,
-                        actual=text,
-                        diff=unified_diff_text(matcher.equals, text, max_diff),
-                        max_diff=max_diff,
-                    )
-                )
-            if matcher.equals_file is not None:
-                expected_text, error = _read_equals_file(
-                    source_dir, matcher.equals_file
-                )
-                if error is not None:
-                    failures.append(_fail("files", error, max_diff=max_diff))
-                    continue
-                if expected_text is None:
-                    failures.append(
-                        _fail(
-                            "files",
-                            f"equals_file produced no text: {matcher.equals_file}",
-                            max_diff=max_diff,
-                        )
-                    )
-                    continue
-                if text != expected_text:
-                    failures.append(
-                        _fail(
-                            "files",
-                            f"file {matcher.path} did not equal {matcher.equals_file}",
-                            expected=expected_text,
-                            actual=text,
-                            diff=unified_diff_text(expected_text, text, max_diff),
-                            max_diff=max_diff,
-                        )
-                    )
+        failures.extend(_match_file_existence(matcher, path))
+        failures.extend(_match_file_content(matcher, path, source_dir, max_diff))
     return failures
+
+
+def _match_file_existence(matcher: FileMatcher, path: Path) -> list[AssertionFailure]:
+    exists = path.is_file() or path.is_dir()
+    missing = matcher.exists is False or matcher.not_exists is True
+    failures: list[AssertionFailure] = []
+    if matcher.exists is True and not exists:
+        failures.append(_fail("files", f"expected path to exist: {matcher.path}"))
+    if missing and exists:
+        failures.append(_fail("files", f"expected path to be absent: {matcher.path}"))
+    return failures
+
+
+def _read_work_file(
+    matcher: FileMatcher, path: Path
+) -> tuple[str | None, AssertionFailure | None]:
+    try:
+        text = _read_text_exact(path, matcher.encoding)
+    except LookupError as exc:
+        LOGGER.error("unknown file encoding %s for %s: %s", matcher.encoding, path, exc)
+        return None, _fail(
+            "files",
+            f"file {matcher.path} has unknown encoding {matcher.encoding}: {exc}",
+        )
+    except UnicodeDecodeError as exc:
+        LOGGER.error("file is not %s %s: %s", matcher.encoding, path, exc)
+        return None, _fail(
+            "files",
+            f"file {matcher.path} is not valid {matcher.encoding}: {exc}",
+        )
+    except OSError as exc:
+        LOGGER.error("failed to read %s: %s", path, exc)
+        return None, _fail(
+            "files",
+            f"failed to read {matcher.path} for content check: {exc}",
+        )
+    return text, None
+
+
+def _match_file_content(
+    matcher: FileMatcher,
+    path: Path,
+    source_dir: Path,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    needs_content = any(
+        value is not None
+        for value in (matcher.contains, matcher.equals, matcher.equals_file)
+    )
+    if not needs_content:
+        return []
+    if not path.is_file():
+        return [_fail("files", f"file not found for content check: {matcher.path}")]
+    text, read_failure = _read_work_file(matcher, path)
+    if read_failure is not None:
+        return [read_failure]
+    if text is None:
+        return [_fail("files", f"file {matcher.path} produced no text")]
+    actual_cmp = apply_newline_mode(text, matcher.newline)
+    requirement = newline_requirement_failure(text, matcher.newline)
+    failures: list[AssertionFailure] = []
+    if requirement is not None:
+        failures.append(_fail("files", f"file {matcher.path} {requirement}"))
+    failures.extend(_match_file_contains(matcher, text, actual_cmp, max_diff))
+    failures.extend(_match_file_equals(matcher, text, actual_cmp, max_diff))
+    failures.extend(
+        _match_file_equals_file(matcher, text, actual_cmp, source_dir, max_diff)
+    )
+    return failures
+
+
+def _match_file_contains(
+    matcher: FileMatcher,
+    text: str,
+    actual_cmp: str,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    if matcher.contains is None:
+        return []
+    needle = apply_newline_mode(matcher.contains, matcher.newline)
+    if needle in actual_cmp:
+        return []
+    return [
+        _fail(
+            "files",
+            f"file {matcher.path} did not contain expected text",
+            expected=matcher.contains,
+            actual=text,
+            max_diff=max_diff,
+        )
+    ]
+
+
+def _match_file_equals(
+    matcher: FileMatcher,
+    text: str,
+    actual_cmp: str,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    if matcher.equals is None:
+        return []
+    expected_cmp = apply_newline_mode(matcher.equals, matcher.newline)
+    if actual_cmp == expected_cmp:
+        return []
+    return [
+        _fail(
+            "files",
+            f"file {matcher.path} content mismatch",
+            expected=matcher.equals,
+            actual=text,
+            diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+            max_diff=max_diff,
+        )
+    ]
+
+
+def _match_file_equals_file(
+    matcher: FileMatcher,
+    text: str,
+    actual_cmp: str,
+    source_dir: Path,
+    max_diff: int,
+) -> list[AssertionFailure]:
+    if matcher.equals_file is None:
+        return []
+    expected_text, error = _read_equals_file(source_dir, matcher.equals_file)
+    if error is not None:
+        return [_fail("files", error, max_diff=max_diff)]
+    if expected_text is None:
+        return [
+            _fail(
+                "files",
+                f"equals_file produced no text: {matcher.equals_file}",
+                max_diff=max_diff,
+            )
+        ]
+    expected_cmp = apply_newline_mode(expected_text, matcher.newline)
+    if actual_cmp == expected_cmp:
+        return []
+    return [
+        _fail(
+            "files",
+            f"file {matcher.path} did not equal {matcher.equals_file}",
+            expected=expected_text,
+            actual=text,
+            diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+            max_diff=max_diff,
+        )
+    ]
 
 
 def match_mock_calls(
@@ -482,5 +628,13 @@ def evaluate_case(
     failures.extend(match_env(case.expect.env, env))
     failures.extend(match_files(case.expect.files, work_dir, source_dir, max_diff))
     failures.extend(match_mock_calls(case.mocks, mock_calls, max_diff))
+    if failures:
+        first = failures[0]
+        LOGGER.info(
+            "first assertion failure case_id=%s kind=%s message=%s",
+            case.case_id,
+            first.kind,
+            first.message,
+        )
     LOGGER.info("assertion failures case_id=%s count=%s", case.case_id, len(failures))
     return failures

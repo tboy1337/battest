@@ -12,7 +12,7 @@ $analyzerSettings = Join-Path -Path $PSScriptRoot -ChildPath 'PSScriptAnalyzerSe
 . (Join-Path -Path $PSScriptRoot -ChildPath 'InstallerPs.Helpers.ps1')
 
 if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
-    Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+    Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck -MinimumVersion 1.21.0
 }
 $pester5 = Get-Module -ListAvailable -Name Pester |
     Where-Object { $_.Version.Major -ge 5 }

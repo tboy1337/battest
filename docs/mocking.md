@@ -1,8 +1,10 @@
 # Mocking
 
 cmd.exe **internals** (`del`, `copy`, `rd`, …) cannot be shadowed via `PATH`.
-battest only stubs **external** commands (`ipconfig`, `reg`, `net`, `timeout`,
-`format`, …) listed in batch-spec `stock_windows_utilities`.
+battest stubs **external** commands whose stem is not a cmd.exe internal.
+That includes names in batch-spec `stock_windows_utilities` (`ipconfig`,
+`reg`, `net`, `timeout`, `format`, …) and any other non-internal stem a
+fixture lists under `mocks:`.
 
 ## Per-case mocks
 
@@ -69,8 +71,11 @@ command under `allow:`.
 
 ## Internals
 
-Relative `del out.txt` only affects the isolated working directory. Scripts
-that write via `%~dp0` also stay inside that workdir copy. A destructive
-internal (`copy`, `del`, `erase`, `move`, `rd`, `ren`, `rename`, `rmdir`)
-used with an absolute path (`del C:\Windows\...`) cannot be mocked; battest
-emits a warning. Run those cases in a disposable VM.
+Relative `del out.txt` only affects the isolated working directory **until the
+script changes directory**. After `cd`, relative internals operate on the new
+current directory (see `examples/windowsrescue/flush_dns.cmd`, which `cd`s to
+`%SystemDrive%`). Scripts that write via `%~dp0` stay inside the workdir copy.
+A destructive internal (`copy`, `del`, `erase`, `move`, `rd`, `ren`, `rename`,
+`rmdir`) used with an absolute path (`del C:\Windows\...`) cannot be mocked;
+battest emits a warning. `%SystemRoot%` and `%SystemDrive%` forms next to
+those verbs also warn. Run those cases in a disposable VM.

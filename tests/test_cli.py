@@ -8,7 +8,6 @@ import re
 import runpy
 import sys
 
-from pydantic import ValidationError
 import pytest
 import yaml
 
@@ -302,6 +301,35 @@ def test_main_junit_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     assert main(["run", str(tmp_path), "--junit-xml", str(junit)]) == 2
 
 
+def test_main_junit_oserror_preserves_fail_exit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    (tmp_path / "ok.battest.yaml").write_text(
+        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("battest.cli.require_windows", lambda: None)
+    monkeypatch.setattr(
+        "battest.cli.execute_cases",
+        lambda cases, config: [
+            RunResult(
+                case_id=cases[0].case_id,
+                description=cases[0].description,
+                outcome=Outcome.FAIL,
+            )
+        ],
+    )
+
+    def boom_write(_results: list[RunResult], _path: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("battest.cli.write_junit_xml", boom_write)
+    junit = tmp_path / "junit.xml"
+    assert main(["run", str(tmp_path), "--junit-xml", str(junit)]) == 1
+
+
 def test_main_usage_junit_oserror(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -405,9 +433,9 @@ def test_run_case_rejects_non_finite_timeout(tmp_path: Path) -> None:
         script_path=script,
         expect=Expect(exit_code=0),
     )
-    with pytest.raises(ValidationError, match="finite"):
+    with pytest.raises(EngineError, match="finite"):
         run_case(case, timeout_seconds=float("inf"))
-    with pytest.raises(ValidationError, match="finite"):
+    with pytest.raises(EngineError, match="finite"):
         run_cases([case], timeout_seconds=float("nan"))
 
 
@@ -585,6 +613,8 @@ def test_ci_retries_release_when_version_tag_is_missing() -> None:
     assert "tag v${NEW_VERSION} is missing; releasing." in script
     assert "should_release=true" in script
     assert "should_release=false" in script
+    assert "should_publish_pypi=true" in script
+    assert "github.event.inputs.force" in script
     assert "python scripts/read_git_pyproject_version.py HEAD^" in script
     assert "subprocess.check_output(['git', 'show', 'HEAD^:pyproject.toml'])" not in (
         script
@@ -641,8 +671,18 @@ def test_ci_release_jobs_are_atomic() -> None:
         "build-windows",
         "build-wheels",
     ]
-    assert publish_pypi["needs"] == ["create-release"]
-    assert publish_pypi["if"] == "needs.create-release.result == 'success'"
+    assert publish_pypi["needs"] == [
+        "check-version",
+        "build-wheels",
+        "create-release",
+    ]
+    publish_if = str(publish_pypi.get("if"))
+    assert "needs.build-wheels.result == 'success'" in publish_if
+    assert "should_publish_pypi" in publish_if
+    assert publish_pypi.get("environment") == "pypi"
+    permissions = publish_pypi.get("permissions")
+    assert isinstance(permissions, dict)
+    assert permissions.get("id-token") == "write"
     steps = create_release["steps"]
     assert isinstance(steps, list)
     download_names = [
@@ -660,12 +700,45 @@ def test_ci_release_jobs_are_atomic() -> None:
     artifacts = str(release.get("with", {}).get("artifacts", ""))
     assert "Battest-v${{ needs.check-version.outputs.version }}.zip" in artifacts
     assert "./python-dist/*" in artifacts
-    twine = next(
+    assert "github.event.inputs.force == 'true'" in str(
+        release.get("with", {}).get("allowUpdates")
+    )
+    publish = next(
         step
         for step in publish_pypi["steps"]
         if isinstance(step, dict) and step.get("name") == "Publish to PyPI"
     )
-    assert "twine upload --skip-existing" in str(twine.get("run"))
+    assert str(publish.get("uses", "")).startswith(
+        "pypa/gh-action-pypi-publish@release/"
+    )
+    assert publish.get("with", {}).get("skip-existing") is True
+    workflow_text = (_repo_root() / ".github" / "workflows" / "CI.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "PYPI_BATTEST" not in workflow_text
+    assert "TWINE_PASSWORD" not in workflow_text
+    assert "workflow_dispatch:" in workflow_text
+    assert "force:" in workflow_text
+    assert "default: false" in workflow_text
+    check_version = jobs["check-version"]
+    concurrency = check_version["concurrency"]
+    assert isinstance(concurrency, dict)
+    assert concurrency["group"] == "battest-release"
+    assert concurrency["cancel-in-progress"] is False
+    build_windows = jobs["build-windows"]
+    windows_names = [
+        step.get("name")
+        for step in build_windows["steps"]
+        if isinstance(step, dict) and step.get("name")
+    ]
+    assert "Smoke test executable" in windows_names
+    assert windows_names.index("Smoke test executable") < windows_names.index(
+        "Package executable for release"
+    )
+    build_wheels = jobs["build-wheels"]
+    assert build_wheels["if"] == (
+        "needs.check-version.outputs.should_publish_pypi == 'true'"
+    )
 
 
 def test_ci_package_smoke_builds_and_checks_dist() -> None:
@@ -681,6 +754,7 @@ def test_ci_package_smoke_builds_and_checks_dist() -> None:
     ]
     assert "Build sdist and wheel" in names
     assert "Check dist" in names
+    assert "Install wheel and import battest" in names
     build = next(
         step
         for step in steps
@@ -691,8 +765,15 @@ def test_ci_package_smoke_builds_and_checks_dist() -> None:
         for step in steps
         if isinstance(step, dict) and step.get("name") == "Check dist"
     )
+    install = next(
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and step.get("name") == "Install wheel and import battest"
+    )
     assert "python -m build" in str(build.get("run"))
     assert "twine check dist/*" in str(check.get("run"))
+    assert "import battest" in str(install.get("run"))
 
 
 def test_ci_cancels_in_progress_pull_requests_only() -> None:

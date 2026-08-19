@@ -1,4 +1,10 @@
-"""Pydantic models for battest fixture documents and runtime cases."""
+"""Pydantic models for battest fixture documents and runtime cases.
+
+Pydantic validators encode schema branches; splitting them would scatter
+load-time rules. Keep too-many-branches disabled here only.
+"""
+
+# pylint: disable=too-many-branches
 
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ from pydantic import (
 )
 
 from battest.constants import (
+    CMD_UNSAFE_ARG_CHARS,
     COMMAND_NAME_PATTERN,
     MAX_JOBS,
     MAX_REGEX_PATTERN_LENGTH,
@@ -91,6 +98,20 @@ def require_relative_fixture_path(value: str, label: str) -> str:
         LOGGER.warning("rejecting %s with parent segment %r", label, value)
         raise ValueError(f"{label} cannot contain '..'")
     return require_no_reserved_device(value, label)
+
+
+def reject_unsafe_cmd_args(value: list[str]) -> list[str]:
+    """Reject args that would be re-parsed as cmd.exe metacharacters."""
+    for item in value:
+        unsafe = sorted({char for char in item if char in CMD_UNSAFE_ARG_CHARS})
+        if unsafe:
+            rendered = " ".join(repr(char) for char in unsafe)
+            LOGGER.warning("rejecting args containing cmd metacharacters %s", rendered)
+            raise ValueError(
+                "args cannot contain cmd.exe metacharacters "
+                f"{rendered}; battest passes args through cmd /c"
+            )
+    return value
 
 
 FinitePositiveFloat = Annotated[float, AfterValidator(require_finite_positive)]
@@ -189,6 +210,8 @@ class FileMatcher(BaseModel):
     contains: str | None = Field(default=None, min_length=1)
     equals: str | None = None
     equals_file: str | None = Field(default=None, min_length=1)
+    encoding: str = "utf-8"
+    newline: NewlineMode | None = None
 
     @field_validator("equals_file")
     @classmethod
@@ -211,6 +234,15 @@ class FileMatcher(BaseModel):
             LOGGER.warning("rejecting file matcher path with parent segment %r", value)
             raise ValueError("file matcher path cannot contain '..'")
         return require_no_reserved_device(value, "file matcher path")
+
+    @field_validator("encoding")
+    @classmethod
+    def encoding_must_be_named(cls, value: str) -> str:
+        """Reject blank file encodings."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("file matcher encoding must not be empty")
+        return stripped
 
     @model_validator(mode="after")
     def reject_conflicting_existence(self) -> FileMatcher:
@@ -351,6 +383,20 @@ class Expect(BaseModel):
     env: EnvExpect | None = None
     files: list[FileMatcher] = Field(default_factory=list)
 
+    def has_constraints(self) -> bool:
+        """Return True when this expect block asserts anything."""
+        if self.exit_code is not None:
+            return True
+        if self.files:
+            return True
+        if self.env is not None:
+            return True
+        if self.stdout is not None and self.stdout.has_constraint():
+            return True
+        if self.stderr is not None and self.stderr.has_constraint():
+            return True
+        return False
+
 
 class ParamOverlay(BaseModel):
     """Optional overlay that expands one document into a matrix row."""
@@ -375,6 +421,14 @@ class ParamOverlay(BaseModel):
         if value is None:
             return None
         return [normalize_command_name(item) for item in value]
+
+    @field_validator("args")
+    @classmethod
+    def overlay_args_must_be_cmd_safe(cls, value: list[str] | None) -> list[str] | None:
+        """Reject overlay args that contain cmd.exe metacharacters."""
+        if value is None:
+            return None
+        return reject_unsafe_cmd_args(value)
 
     @field_validator("id")
     @classmethod
@@ -426,6 +480,12 @@ class CaseDocument(BaseModel):
     def document_allow_names_must_be_safe(cls, value: list[str]) -> list[str]:
         """Normalize allow entries to safe command stems."""
         return [normalize_command_name(item) for item in value]
+
+    @field_validator("args")
+    @classmethod
+    def document_args_must_be_cmd_safe(cls, value: list[str]) -> list[str]:
+        """Reject document args that contain cmd.exe metacharacters."""
+        return reject_unsafe_cmd_args(value)
 
     @field_validator("script", "setup", "teardown")
     @classmethod

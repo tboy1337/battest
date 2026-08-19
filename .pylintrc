@@ -16,6 +16,7 @@ source-roots=src
 [MESSAGES CONTROL]
 # Pylint design metrics do not fit pydantic models, small typed containers,
 # or cmd.exe orchestration helpers that take many explicit parameters.
+# too-many-branches is left enabled so helper splits stay honest.
 disable=raw-checker-failed,
         bad-inline-option,
         locally-disabled,
@@ -30,7 +31,6 @@ disable=raw-checker-failed,
         too-many-arguments,
         too-many-locals,
         too-many-statements,
-        too-many-branches,
         too-many-return-statements,
         too-many-positional-arguments,
         broad-exception-caught,

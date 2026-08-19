@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from battest.constants import BATTEST_PREFIX
+from battest.constants import BATTEST_RC_NAME
 from battest.logging_config import get_logger
 
 LOGGER = get_logger("envsnap")
@@ -24,11 +24,9 @@ def parse_set_output(text: str) -> dict[str, str]:
 
 
 def filter_helper_vars(env: dict[str, str]) -> dict[str, str]:
-    """Drop battest-injected helper variables from an env snapshot."""
+    """Drop wrapper-owned BATTEST_RC from an env snapshot."""
     filtered = {
-        name: value
-        for name, value in env.items()
-        if not name.upper().startswith(BATTEST_PREFIX)
+        name: value for name, value in env.items() if name.upper() != BATTEST_RC_NAME
     }
     LOGGER.debug("filtered helper env vars kept=%s", len(filtered))
     return filtered

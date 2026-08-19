@@ -1,74 +1,28 @@
 # battest
 
-Runtime test runner for Windows batch files (`.bat` / `.cmd`). battest executes
+Runtime test runner for Windows batch files (`.bat` / `.cmd`). battest launches
 real `cmd.exe`, then asserts on exit code, stdout, stderr, environment, and
 filesystem side effects.
+
+It is a **trusted-fixture runner**, not a sandbox. Destructive scripts can still
+harm the host. Use `--safe-defaults` (or the GitHub Action, which enables it)
+and a disposable VM or CI runner for untrusted suites. Details:
+[Safety](docs/safety.md).
 
 battest is a sibling of [Blinter](https://github.com/tboy1337/Blinter) (static
 analysis) and [batch-spec](https://github.com/tboy1337/batch-spec) (language
 spec). It does not depend on Blinter.
 
-**Requirements:** Python 3.11+ and Windows (for `battest run`). License:
-AGPL-3.0-or-later ([COPYING](COPYING)). Changelog: [docs/CHANGELOG.md](docs/CHANGELOG.md).
+**Requirements:** Python 3.11+ and Windows for `battest run`. License:
+AGPL-3.0-or-later ([COPYING](COPYING)).
 
-A version bump of `[project].version` in `pyproject.toml` on `main` is the
-release trigger (Windows exe zip, GitHub Release, and PyPI). If that version
-never got a `v*` tag, the next successful `main` CI run retries the release.
-Publishing to PyPI requires the `PYPI_BATTEST` GitHub Actions secret.
-
-## Installation
-
-**Option 1: Install via pip (recommended)**
+## Quick start
 
 ```text
 pip install battest
 ```
 
-**Option 2: Standalone executable (no Python)**
-
-If you prefer a standalone `.exe` over pip, use the one-line installer:
-
-```text
-curl -L https://raw.githubusercontent.com/tboy1337/battest/main/scripts/install_battest.cmd -o install_battest.cmd && (call install_battest.cmd || cd .) && del install_battest.cmd
-```
-
-This installs the latest `battest.exe` to `%LOCALAPPDATA%\Programs\battest\bin`,
-adds it to your user `PATH`, and handles updates automatically. The installer
-verifies the GitHub release-asset SHA-256 digest before extract. Restart your
-terminal or IDE after installation for `PATH` changes to take effect.
-
-**Manual zip download (fallback):**
-
-- Download the latest `Battest-vX.Y.Z.zip` from
-  [GitHub Releases](https://github.com/tboy1337/battest/releases)
-- Extract the archive; the executable is `Battest-vX.Y.Z\battest.exe`
-- Some antivirus software may flag the executable as a false positive due to
-  PyInstaller's runtime unpacking behavior. The executable is safe (all source
-  code is open for inspection). pip installation avoids that issue.
-
-### Uninstall
-
-**Standalone executable (one-line installer):**
-
-```text
-curl -L https://raw.githubusercontent.com/tboy1337/battest/main/scripts/uninstall_battest.cmd -o uninstall_battest.cmd && (call uninstall_battest.cmd || cd .) && del uninstall_battest.cmd
-```
-
-**pip installation:**
-
-```text
-pip uninstall battest
-```
-
-## Five-minute start
-
-1. Install from PyPI:
-
-```text
-pip install battest
-```
-
-2. Create `hello.cmd`:
+Create `hello.cmd`:
 
 ```bat
 @echo off
@@ -76,7 +30,7 @@ echo hello
 exit /b 0
 ```
 
-3. Create `hello.battest.yaml` next to it:
+Create `hello.battest.yaml` next to it:
 
 ```yaml
 description: hello prints hello
@@ -87,53 +41,128 @@ expect:
     contains: hello
 ```
 
-4. Run:
+Run:
 
 ```text
 battest run hello.battest.yaml
 ```
 
-A passing case prints `PASS hello ...`. A failing case prints a diff and exits
-with status `1`. Invalid YAML exits with status `2`.
+`python -m battest` is the same as `battest`. A passing case prints `PASS`. A
+failing case prints a diff and exits `1`. Invalid YAML or usage exits `2`.
 
-Case-directory form (same as batch-spec's corpus layout):
+Case-directory form (batch-spec corpus layout) is equivalent:
 
 ```text
 tests/hello/input.cmd
 tests/hello/expect.yaml
 ```
 
-Then `battest run tests`.
+Then `battest run tests`. From this repository, `battest run examples` runs the
+bundled fixtures.
+
+CLI `--safe-defaults` is **off**. The GitHub Action turns it **on**. That flag
+PATH-stubs common destructive externals (`format`, `shutdown`, `reg`, and
+others); it does not isolate the filesystem. See [CLI](docs/cli.md) and
+[Mocking](docs/mocking.md).
+
+## GitHub Action
+
+Requires a Windows runner. Pin a published release tag, not a commit SHA.
+
+```yaml
+jobs:
+  test-batch:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: battest
+        uses: tboy1337/battest@v1.0.6
+        with:
+          path: tests
+          safe-defaults: "true"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: battest-junit
+          path: ${{ steps.battest.outputs.junit-xml }}
+```
+
+Inputs, outputs, and `--` before `path` are documented in
+[GitHub Action](docs/github-action.md).
+
+## Installation
+
+### pip (recommended)
+
+```text
+pip install battest
+```
+
+Wheels on PyPI are published with Trusted Publishing (OIDC) from the GitHub
+`pypi` environment. The workflow does not use a long-lived PyPI API token.
+See [Security](docs/SECURITY.md).
+
+### Standalone executable (no Python)
+
+Run this from **cmd.exe** (not PowerShell). It downloads the bootstrap script,
+installs the latest `battest.exe` to `%LOCALAPPDATA%\Programs\battest\bin`,
+adds that directory to your user `PATH`, and returns the installer exit code
+after deleting the downloaded `.cmd`:
+
+```text
+curl -L https://raw.githubusercontent.com/tboy1337/battest/main/scripts/install_battest.cmd -o install_battest.cmd && call install_battest.cmd & set "BATTEST_INSTALL_EXIT=%ERRORLEVEL%" & del install_battest.cmd & exit /b %BATTEST_INSTALL_EXIT%
+```
+
+The installer always fetches the latest GitHub release and verifies the zip
+SHA-256 digest before extract. The bootstrap `.cmd` itself is not
+digest-pinned; the exe payload is. Restart the terminal or IDE after install
+so `PATH` updates are visible.
+
+**Manual zip:** download `Battest-vX.Y.Z.zip` from
+[GitHub Releases](https://github.com/tboy1337/battest/releases) and run
+`Battest-vX.Y.Z\battest.exe`. Some antivirus products flag PyInstaller unpacking
+as a false positive. The source is public; pip avoids that class of heuristic.
+
+### Uninstall
+
+Standalone install (cmd.exe):
+
+```text
+curl -L https://raw.githubusercontent.com/tboy1337/battest/main/scripts/uninstall_battest.cmd -o uninstall_battest.cmd && call uninstall_battest.cmd & set "BATTEST_UNINSTALL_EXIT=%ERRORLEVEL%" & del uninstall_battest.cmd & exit /b %BATTEST_UNINSTALL_EXIT%
+```
+
+pip:
+
+```text
+pip uninstall battest
+```
+
+## Python API
+
+```python
+from battest import load_case, run_case, run_cases
+
+cases = load_case("hello.battest.yaml")
+result = run_case(cases[0], safe_defaults=False)
+results = run_cases(cases, jobs=1, safe_defaults=False)
+```
+
+`run_case` / `run_cases` require Windows `cmd.exe`. `safe_defaults` defaults to
+off, matching the CLI. Full notes: [CLI](docs/cli.md).
 
 ## Documentation
 
+Getting started:
+
 - [Fixture format](docs/fixture-format.md)
 - [CLI](docs/cli.md)
+- [GitHub Action](docs/github-action.md)
+
+Behavior:
+
 - [Mocking external commands](docs/mocking.md)
 - [PATH mock stub crate](docs/stub.md)
-- [GitHub Action](docs/github-action.md)
-- [Changelog](docs/CHANGELOG.md)
 - [Encoding](docs/encoding.md)
 - [Safety](docs/safety.md)
 - [Security](docs/SECURITY.md)
-
-## Development
-
-```text
-git clone --recurse-submodules https://github.com/tboy1337/battest.git
-cd battest
-python -m pip install -e ".[dev]"
-python scripts/generate_spec_data.py
-python scripts/verify.py
-```
-
-Rust (PATH-mock stub crate in `stub/`):
-
-```text
-cargo test --manifest-path stub/Cargo.toml --locked --all-targets
-python scripts/check_rust_coverage.py
-python scripts/build_stub.py
-```
-
-On Windows, `battest run examples` dogfoods `examples/hello` and
-WindowsRescue `flush_dns.cmd` under PATH stubs.
+- [Changelog](docs/CHANGELOG.md)
