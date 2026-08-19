@@ -371,6 +371,32 @@ jobs:
         run: .\scripts\test_exe_smoke.ps1 -ExePath .\dist\battest.exe
         shell: pwsh
 
+  package-smoke:
+    name: sdist and wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check dist
+        run: python -m twine check dist/*
+
   dependency-graph:
     name: Dependency Graph
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -401,6 +427,7 @@ jobs:
       - rust-quality
       - rust-test
       - test-windows-exe
+      - package-smoke
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -563,6 +590,12 @@ jobs:
           name: windows-build
           path: ./build
 
+      - name: Download Python dist
+        uses: actions/download-artifact@v8
+        with:
+          name: python-dist
+          path: ./python-dist
+
       - name: Extract release notes
         id: release_notes
         run: |
@@ -573,7 +606,7 @@ jobs:
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: ./build/Battest-v${{ needs.check-version.outputs.version }}.zip
+          artifacts: ./build/Battest-v${{ needs.check-version.outputs.version }}.zip,./python-dist/*
           tag: v${{ needs.check-version.outputs.version }}
           bodyFile: ${{ steps.release_notes.outputs.path }}
           token: ${{ secrets.GITHUB_TOKEN }}

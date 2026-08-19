@@ -3,9 +3,11 @@ try {
 $binPath = '__BATTEST_BIN__'
 $path = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not $path) { Write-Host 'User PATH is empty'; exit 0 }
-$segments = $path -split ';' | Where-Object { $_ -ne '' }
-if ($segments -contains $binPath) {
-$pathArray = $path -split ';' | Where-Object { $_ -ne '' -and $_ -ne $binPath }
+$segments = @($path -split ';' | Where-Object { $_ -ne '' })
+$normalizedBin = $binPath.TrimEnd('\')
+$cmp = [System.StringComparison]::OrdinalIgnoreCase
+$pathArray = @($segments | Where-Object { -not [string]::Equals($_.TrimEnd('\'), $normalizedBin, $cmp) })
+if ($pathArray.Count -ne $segments.Count) {
 $newPath = $pathArray -join ';'
 [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
 Write-Host 'battest removed from User PATH'

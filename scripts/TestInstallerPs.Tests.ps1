@@ -138,27 +138,47 @@ Describe 'Test-BattestArchiveHash.ps1' {
 }
 
 Describe 'Update-BattestUserPath.ps1' {
-    It 'builds a PATH value that appends the bin directory' {
-        $binPath = 'C:\Test\battest\bin'
-        $path = 'C:\Existing'
-        if (-not $path) { $path = '' }
-        if ($path -notlike "*$binPath*") {
-            if (-not $path) {
-                $newPath = $binPath
-            }
-            else {
-                $newPath = $path.TrimEnd(';') + ';' + $binPath
+    It 'treats PATH membership as case-insensitive and ignores a trailing backslash' {
+        $binPath = 'C:\Users\Test\AppData\Local\Programs\battest\bin'
+        $path = 'c:\users\test\appdata\local\programs\battest\bin\;C:\Windows'
+        $segments = @($path -split ';' | Where-Object { $_ -ne '' })
+        $normalizedBin = $binPath.TrimEnd('\')
+        $already = $false
+        foreach ($seg in $segments) {
+            if ([string]::Equals($seg.TrimEnd('\'), $normalizedBin, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $already = $true
+                break
             }
         }
+        $already | Should -BeTrue
+    }
+
+    It 'builds a PATH value that appends the bin directory when absent' {
+        $binPath = 'C:\Test\battest\bin'
+        $path = 'C:\Existing'
+        $segments = @($path -split ';' | Where-Object { $_ -ne '' })
+        $normalizedBin = $binPath.TrimEnd('\')
+        $already = $false
+        foreach ($seg in $segments) {
+            if ([string]::Equals($seg.TrimEnd('\'), $normalizedBin, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $already = $true
+                break
+            }
+        }
+        $already | Should -BeFalse
+        $newPath = $path.TrimEnd(';') + ';' + $binPath
         $newPath | Should -Be 'C:\Existing;C:\Test\battest\bin'
     }
 }
 
 Describe 'Remove-BattestUserPath.ps1' {
-    It 'removes the bin path from the user PATH' {
+    It 'removes a case-insensitive PATH segment including a trailing backslash' {
         $binPath = 'C:\Test\battest\bin'
-        $path = 'C:\Alpha;C:\Test\battest\bin;C:\Beta'
-        $pathArray = $path -split ';' | Where-Object { $_ -ne '' -and $_ -ne $binPath }
+        $path = 'C:\Alpha;c:\test\battest\bin\;C:\Beta'
+        $segments = @($path -split ';' | Where-Object { $_ -ne '' })
+        $normalizedBin = $binPath.TrimEnd('\')
+        $cmp = [System.StringComparison]::OrdinalIgnoreCase
+        $pathArray = @($segments | Where-Object { -not [string]::Equals($_.TrimEnd('\'), $normalizedBin, $cmp) })
         $newPath = $pathArray -join ';'
         $newPath | Should -Be 'C:\Alpha;C:\Beta'
     }

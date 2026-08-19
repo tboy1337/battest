@@ -216,6 +216,13 @@ def _run_process(
     encoding: str,
 ) -> tuple[int, str, str, bool]:
     LOGGER.debug("exec command=%s cwd=%s timeout=%s", command, cwd, timeout_seconds)
+    if timeout_seconds <= 0:
+        LOGGER.error(
+            "timeout already expired before spawn command=%s timeout=%s",
+            command,
+            timeout_seconds,
+        )
+        return -1, "", "", True
     stdin_bytes = _encode_stdin(stdin_text, encoding)
     creationflags = CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
     timed_out = False
@@ -359,11 +366,11 @@ def _encode_stdin(stdin_text: str, encoding: str) -> bytes | None:
     try:
         return stdin_text.encode(encoding)
     except UnicodeEncodeError:
-        LOGGER.warning(
-            "stdin contains characters that cannot be encoded as %s; replacing",
+        LOGGER.error(
+            "stdin contains characters that cannot be encoded as %s",
             encoding,
         )
-        return stdin_text.encode(encoding, errors="replace")
+        raise
 
 
 def _snapshot_env(work_dir: Path, encoding: str) -> dict[str, str]:
@@ -620,6 +627,10 @@ def _run_sut(
             remaining_timeout(deadline),
             encoding,
         )
+    except UnicodeEncodeError as exc:
+        message = f"stdin cannot be encoded as {encoding}: {exc}"
+        LOGGER.error("sut failed for %s: %s", case.case_id, message)
+        return _error_result(case, started, warnings, message)
     except OSError as exc:
         LOGGER.error("sut failed for %s: %s", case.case_id, exc)
         return _error_result(case, started, warnings, str(exc))
@@ -691,19 +702,38 @@ def execute_cases(cases: list[Case], config: EngineConfig) -> list[RunResult]:
     LOGGER.info("execute_cases count=%s jobs=%s", len(cases), config.jobs)
     if config.jobs <= 1 or len(cases) <= 1:
         return [execute_case(case, config) for case in cases]
-    results_by_id: dict[str, RunResult] = {}
+    slotted: list[RunResult | None] = [None] * len(cases)
     with ThreadPoolExecutor(max_workers=config.jobs) as pool:
-        future_map = {pool.submit(execute_case, case, config): case for case in cases}
+        future_map = {
+            pool.submit(execute_case, case, config): index
+            for index, case in enumerate(cases)
+        }
         for future in as_completed(future_map):
-            case = future_map[future]
+            index = future_map[future]
+            case = cases[index]
             try:
-                results_by_id[case.case_id] = future.result()
+                slotted[index] = future.result()
             except Exception as exc:
                 LOGGER.error("case %s raised %s", case.case_id, exc, exc_info=True)
-                results_by_id[case.case_id] = RunResult(
+                slotted[index] = RunResult(
                     case_id=case.case_id,
                     description=case.description,
                     outcome=Outcome.ERROR,
                     error_message=str(exc),
                 )
-    return [results_by_id[case.case_id] for case in cases]
+    results: list[RunResult] = []
+    for index, result in enumerate(slotted):
+        if result is not None:
+            results.append(result)
+            continue
+        case = cases[index]
+        LOGGER.error("case %s produced no result", case.case_id)
+        results.append(
+            RunResult(
+                case_id=case.case_id,
+                description=case.description,
+                outcome=Outcome.ERROR,
+                error_message="worker produced no result",
+            )
+        )
+    return results

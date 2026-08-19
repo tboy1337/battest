@@ -403,8 +403,16 @@ echo try {
 echo $binPath = '%BATTEST_BIN%'
 echo $path = [Environment]::GetEnvironmentVariable('Path', 'User'^)
 echo if (-not $path^) { $path = '' }
-echo $segments = $path -split ';' ^| Where-Object { $_ -ne '' }
-echo if ($segments -notcontains $binPath^) {
+echo $segments = @($path -split ';' ^| Where-Object { $_ -ne '' }^)
+echo $normalizedBin = $binPath.TrimEnd('\'^)
+echo $already = $false
+echo foreach ($seg in $segments^) {
+echo if ([string]::Equals($seg.TrimEnd('\'^), $normalizedBin, [System.StringComparison]::OrdinalIgnoreCase^)^) {
+echo $already = $true
+echo break
+echo }
+echo }
+echo if (-not $already^) {
 echo if (-not $path^) { $newPath = $binPath } else { $newPath = $path.TrimEnd(';'^) + ';' + $binPath }
 echo [Environment]::SetEnvironmentVariable('Path', $newPath, 'User'^)
 echo Write-Host 'battest added to User PATH permanently'

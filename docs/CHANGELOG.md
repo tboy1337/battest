@@ -5,6 +5,28 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-08-19
+
+Production audit: timeout-budget spawn, installer PATH matching, YAML alias
+limits, and release packaging.
+
+- Setup and the script under test are not spawned when the shared timeout
+  budget is already gone (`communicate(timeout=0)` is never used). A spent
+  SUT budget is `TIMEOUT`; a spent setup budget stays `ERROR`.
+- Stdin that cannot encode to the console code page is a case `ERROR` instead
+  of replacing bytes with `?`.
+- Parallel `run_cases` / `execute_cases` keep one result per input case even
+  when `case_id` values are duplicated.
+- Fixture YAML may use at most 256 aliases; deeper nesting that overflows
+  Python recursion is a schema error. Packaged spec catalogs are unchanged.
+- Installer PATH add/remove compares segments case-insensitively and treats a
+  trailing backslash as equivalent, so a second install does not duplicate the
+  entry.
+- CI builds and twine-checks the sdist and wheel on every run, and GitHub
+  Releases attach those artifacts next to the Windows zip. Actions stay on
+  version tags, not commit SHAs.
+- Directory `load_case(..., include_spec_exec=True)` matches the CLI flag.
+
 ## [1.0.4] - 2026-08-19
 
 Production audit: host env isolation, destructive-path warnings, installer
@@ -117,6 +139,7 @@ Rust stub helper.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
+[1.0.5]: https://github.com/tboy1337/battest/releases/tag/v1.0.5
 [1.0.4]: https://github.com/tboy1337/battest/releases/tag/v1.0.4
 [1.0.3]: https://github.com/tboy1337/battest/releases/tag/v1.0.3
 [1.0.2]: https://github.com/tboy1337/battest/releases/tag/v1.0.2

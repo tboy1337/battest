@@ -19,7 +19,11 @@ Mitigations that **are** included:
   off; the GitHub Action default is on.
 - A single wall-clock timeout that starts after workdir prep (seeding and PATH
   stubs). Setup, the script under test, and teardown share that remaining
-  budget. After expiry, teardown still gets at least five seconds.
+  budget. If the remaining budget is already gone, setup and the script are
+  not spawned. After expiry, teardown still gets at least five seconds.
+- Fixture YAML is loaded with `yaml.SafeLoader` and at most 256 aliases.
+  Nesting that overflows Python recursion is a schema error. This is not a
+  sandbox for untrusted authors; it only bounds alias bombs and stack depth.
 - `taskkill /F /T` on timeout, then a bounded wait so a surviving child cannot
   hang the runner
 - Helper `BATTEST_*` variables are not injected into the script environment.

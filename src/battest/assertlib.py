@@ -185,19 +185,29 @@ def match_output(
                 )
             )
         else:
-            assert expected_text is not None
-            expected_cmp = apply_newline_mode(expected_text, matcher.newline)
-            if actual_cmp != expected_cmp:
+            if expected_text is None:
                 failures.append(
                     _fail(
                         stream_name,
-                        f"{stream_name} did not equal file {matcher.equals_file}",
-                        expected=expected_text,
-                        actual=actual,
-                        diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+                        f"{stream_name} equals_file produced no text: "
+                        f"{matcher.equals_file}",
+                        expected=matcher.equals_file,
                         max_diff=max_diff,
                     )
                 )
+            else:
+                expected_cmp = apply_newline_mode(expected_text, matcher.newline)
+                if actual_cmp != expected_cmp:
+                    failures.append(
+                        _fail(
+                            stream_name,
+                            f"{stream_name} did not equal file {matcher.equals_file}",
+                            expected=expected_text,
+                            actual=actual,
+                            diff=unified_diff_text(expected_cmp, actual_cmp, max_diff),
+                            max_diff=max_diff,
+                        )
+                    )
     if matcher.contains is not None:
         needle = apply_newline_mode(matcher.contains, matcher.newline)
         if needle not in actual_cmp:
@@ -378,7 +388,15 @@ def match_files(
                 if error is not None:
                     failures.append(_fail("files", error, max_diff=max_diff))
                     continue
-                assert expected_text is not None
+                if expected_text is None:
+                    failures.append(
+                        _fail(
+                            "files",
+                            f"equals_file produced no text: {matcher.equals_file}",
+                            max_diff=max_diff,
+                        )
+                    )
+                    continue
                 if text != expected_text:
                     failures.append(
                         _fail(

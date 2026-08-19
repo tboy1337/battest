@@ -61,14 +61,17 @@ If `params` is present, battest runs the base document **and** each overlay.
 Overlay ids become `name[id]` and must be unique. Overlay `mocks`, `allow`, and
 `args` are validated the same way as the base document: mocking a cmd.exe
 internal is a schema error, `allow` of an internal warns, and invalid `%~`
-forms in overlay args warn. Mock `exit_code` values must be 0–255 (cmd
-`ERRORLEVEL` range). `copy` entries are placed in the isolated work dir using
-the relative path from the fixture file. `script`, `setup`, `teardown`,
-`copy`, `equals_file`, and `files[].path` values cannot be rooted, cannot
-contain `..`, and cannot name reserved Windows devices. Missing `equals_file`
-targets are schema errors at load time, not later case failures. Fixture YAML
-larger than 1 MiB (1,048,576 bytes) is a schema error at load time. Sibling files
-that are not the script, setup, or teardown still need `copy:`. `script`,
+forms in overlay args warn. Mock `exit_code` values must be 0–255 because the
+PATH-mock stub is an 8-bit process. `expect.exit_code` may be any integer,
+including cmd `ERRORLEVEL` 9009 for a missing external. `copy` entries are
+placed in the isolated work dir using the relative path from the fixture
+file. `script`, `setup`, `teardown`, `copy`, `equals_file`, and `files[].path`
+values cannot be rooted, cannot contain `..`, and cannot name reserved Windows
+devices. Missing `equals_file` targets are schema errors at load time, not
+later case failures. Fixture YAML larger than 1 MiB (1,048,576 bytes) is a
+schema error at load time. More than 256 YAML aliases, or nesting that
+overflows Python recursion, is also a schema error. Sibling files that are
+not the script, setup, or teardown still need `copy:`. `script`,
 `setup`, and `teardown` are copied into the work directory using that same
 relative layout, so `%~dp0` is the workdir copy of the script directory.
 
@@ -76,7 +79,9 @@ relative layout, so `%~dp0` is the workdir copy of the script directory.
 workdir prep (copying fixtures and PATH stubs). `timeout_seconds` (and the CLI
 `--timeout` default) must be a finite number greater than 0; `nan` and `inf`
 are schema errors. Setup, the script, and teardown share the remaining
-wall-clock budget. After the budget expires, teardown still runs with at least
+wall-clock budget. If that remaining budget is already gone, setup and the
+script under test are not spawned (setup timeout stays `ERROR`; a spent SUT
+budget is `TIMEOUT`). After the budget expires, teardown still runs with at least
 five seconds. Assertions (exit code, output, env, files, mock calls) run
 against the work directory **before** `teardown`. `teardown` always runs when
 it is set, including after a failed `setup`. A failing teardown turns an

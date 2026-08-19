@@ -1236,41 +1236,190 @@ def test_run_process_success_and_timeout(
     assert TimeoutProcess.waited
 
 
-def test_run_process_warns_when_stdin_cannot_encode(
+def test_run_process_does_not_spawn_when_timeout_already_expired(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    spawned: list[object] = []
+
+    class BoomProcess:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            spawned.append(args)
+            raise AssertionError("Popen must not run when timeout is already expired")
+
+    monkeypatch.setattr("battest.engine.subprocess.Popen", BoomProcess)
+    exit_code, stdout, stderr, timed_out = _run_process(
+        ["cmd"], tmp_path, {}, "", 0.0, "utf-8"
+    )
+    assert timed_out is True
+    assert exit_code == -1
+    assert stdout == ""
+    assert stderr == ""
+    assert spawned == []
+
+
+def test_execute_case_times_out_without_spawning_when_budget_already_gone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    monkeypatch.setattr("battest.engine.remaining_timeout", lambda _deadline: 0.0)
+    spawned: list[object] = []
+
+    def track_popen(*args: object, **kwargs: object) -> object:
+        spawned.append(args)
+        raise AssertionError("Popen must not run when the case budget is gone")
+
+    monkeypatch.setattr("battest.engine.subprocess.Popen", track_popen)
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.TIMEOUT
+    assert spawned == []
+
+
+def test_execute_case_setup_timeout_does_not_spawn_when_budget_gone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    monkeypatch.setattr("battest.engine.remaining_timeout", lambda _deadline: 0.0)
+    spawned: list[object] = []
+
+    def track_popen(*args: object, **kwargs: object) -> object:
+        spawned.append(args)
+        raise AssertionError("Popen must not run when the case budget is gone")
+
+    monkeypatch.setattr("battest.engine.subprocess.Popen", track_popen)
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    setup = tmp_path / "setup.cmd"
+    setup.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        setup_path=setup,
+        expect=Expect(exit_code=0),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "setup failed" in result.error_message
+    assert "timeout=True" in result.error_message
+    assert spawned == []
+
+
+def test_run_process_errors_when_stdin_cannot_encode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    class OkProcess:
-        pid = 1
-        returncode = 0
-        stdin = None
-        stdout = None
-        stderr = None
+    spawned: list[object] = []
 
+    class BoomProcess:
         def __init__(self, *args: object, **kwargs: object) -> None:
-            return None
+            spawned.append(args)
+            raise AssertionError("Popen must not run when stdin cannot encode")
 
-        def communicate(
-            self, input: bytes | None = None, timeout: float | None = None
-        ) -> tuple[bytes, bytes]:
-            assert input is not None
-            assert b"?" in input
-            return b"", b""
-
-        def poll(self) -> int | None:
-            return self.returncode
-
-        def wait(self, timeout: float | None = None) -> int:
-            return 0
-
-        def kill(self) -> None:
-            return None
-
-    monkeypatch.setattr("battest.engine.subprocess.Popen", OkProcess)
-    with caplog.at_level("WARNING", logger="battest.engine"):
-        _run_process(["cmd"], tmp_path, {}, "café", 1.0, "ascii")
+    monkeypatch.setattr("battest.engine.subprocess.Popen", BoomProcess)
+    with caplog.at_level("ERROR", logger="battest.engine"):
+        with pytest.raises(UnicodeEncodeError):
+            _run_process(["cmd"], tmp_path, {}, "café", 1.0, "ascii")
     assert "cannot be encoded" in caplog.text
+    assert spawned == []
+
+
+def test_execute_case_errors_when_stdin_cannot_encode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "ascii")
+    spawned: list[object] = []
+
+    def track_popen(*args: object, **kwargs: object) -> object:
+        spawned.append(args)
+        raise AssertionError("Popen must not run when stdin cannot encode")
+
+    monkeypatch.setattr("battest.engine.subprocess.Popen", track_popen)
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        stdin="café",
+        expect=Expect(exit_code=0),
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "stdin" in result.error_message.lower()
+    assert spawned == []
+
+
+def test_execute_cases_preserves_duplicate_case_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    first = Case(
+        case_id="dup",
+        description="alpha",
+        source_path=tmp_path / "expect.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+    second = first.model_copy(update={"description": "beta"})
+
+    def fake_execute(case: Case, _config: EngineConfig) -> RunResult:
+        return RunResult(
+            case_id=case.case_id,
+            description=case.description,
+            outcome=Outcome.PASS,
+        )
+
+    monkeypatch.setattr("battest.engine.execute_case", fake_execute)
+    results = execute_cases([first, second], EngineConfig(jobs=2))
+    assert [item.description for item in results] == ["alpha", "beta"]
+    assert [item.case_id for item in results] == ["dup", "dup"]
+
+
+def test_execute_cases_missing_worker_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    first = Case(
+        case_id="a",
+        description="alpha",
+        source_path=tmp_path / "expect.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+    second = first.model_copy(update={"case_id": "b", "description": "beta"})
+
+    def fake_execute(case: Case, _config: EngineConfig) -> RunResult:
+        return RunResult(
+            case_id=case.case_id,
+            description=case.description,
+            outcome=Outcome.PASS,
+        )
+
+    monkeypatch.setattr("battest.engine.execute_case", fake_execute)
+    monkeypatch.setattr("battest.engine.as_completed", lambda _futures: [])
+    results = execute_cases([first, second], EngineConfig(jobs=2))
+    assert [item.outcome for item in results] == [Outcome.ERROR, Outcome.ERROR]
+    assert results[0].error_message == "worker produced no result"
+    assert results[1].error_message == "worker produced no result"
 
 
 def test_execute_case_setup_timeout_and_env_dump(

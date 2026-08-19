@@ -348,6 +348,19 @@ def test_load_case_file_and_dir(tmp_path: Path) -> None:
     assert from_file[0].description == "ok"
 
 
+def test_load_case_include_spec_exec_when_absent(tmp_path: Path) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    manifest = tmp_path / "ok.battest.yaml"
+    manifest.write_text(
+        "description: ok\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+    cases = load_case(tmp_path, include_spec_exec=True)
+    assert len(cases) == 1
+    assert cases[0].description == "ok"
+
+
 def test_load_case_logs(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     script = tmp_path / "input.cmd"
     script.write_text("@echo off\n", encoding="utf-8")
@@ -547,6 +560,7 @@ def test_ci_dependency_graph_does_not_block_release() -> None:
     assert "dependency-graph" not in needs
     assert "test-windows" in needs
     assert "action-windows" in needs
+    assert "package-smoke" in needs
 
 
 def test_ci_retries_release_when_version_tag_is_missing() -> None:
@@ -629,12 +643,56 @@ def test_ci_release_jobs_are_atomic() -> None:
     ]
     assert publish_pypi["needs"] == ["create-release"]
     assert publish_pypi["if"] == "needs.create-release.result == 'success'"
+    steps = create_release["steps"]
+    assert isinstance(steps, list)
+    download_names = [
+        step.get("name")
+        for step in steps
+        if isinstance(step, dict) and step.get("name")
+    ]
+    assert "Download Windows build" in download_names
+    assert "Download Python dist" in download_names
+    release = next(
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == "Create GitHub Release"
+    )
+    artifacts = str(release.get("with", {}).get("artifacts", ""))
+    assert "Battest-v${{ needs.check-version.outputs.version }}.zip" in artifacts
+    assert "./python-dist/*" in artifacts
     twine = next(
         step
         for step in publish_pypi["steps"]
         if isinstance(step, dict) and step.get("name") == "Publish to PyPI"
     )
     assert "twine upload --skip-existing" in str(twine.get("run"))
+
+
+def test_ci_package_smoke_builds_and_checks_dist() -> None:
+    workflow = _load_ci_workflow()
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    package_smoke = jobs["package-smoke"]
+    assert isinstance(package_smoke, dict)
+    steps = package_smoke["steps"]
+    assert isinstance(steps, list)
+    names = [
+        step.get("name") for step in steps if isinstance(step, dict) and "name" in step
+    ]
+    assert "Build sdist and wheel" in names
+    assert "Check dist" in names
+    build = next(
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == "Build sdist and wheel"
+    )
+    check = next(
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == "Check dist"
+    )
+    assert "python -m build" in str(build.get("run"))
+    assert "twine check dist/*" in str(check.get("run"))
 
 
 def test_ci_cancels_in_progress_pull_requests_only() -> None:

@@ -35,6 +35,7 @@ results = run_cases(cases, jobs=1, safe_defaults=False)
 ```
 
 `load_case` returns one or more resolved cases (param overlays expand).
+Directory roots accept `include_spec_exec=True`, matching `--include-spec-exec`.
 `run_case` / `run_cases` require Windows `cmd.exe`. `safe_defaults` defaults
 to off, matching the CLI.
 

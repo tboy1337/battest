@@ -207,9 +207,11 @@ echo try {
 echo $binPath = '%BATTEST_BIN%'
 echo $path = [Environment]::GetEnvironmentVariable('Path', 'User'^)
 echo if (-not $path^) { Write-Host 'User PATH is empty'; exit 0 }
-echo $segments = $path -split ';' ^| Where-Object { $_ -ne '' }
-echo if ($segments -contains $binPath^) {
-echo $pathArray = $path -split ';' ^| Where-Object { $_ -ne '' -and $_ -ne $binPath }
+echo $segments = @($path -split ';' ^| Where-Object { $_ -ne '' }^)
+echo $normalizedBin = $binPath.TrimEnd('\'^)
+echo $cmp = [System.StringComparison]::OrdinalIgnoreCase
+echo $pathArray = @($segments ^| Where-Object { -not [string]::Equals($_.TrimEnd('\'^), $normalizedBin, $cmp^) }^)
+echo if ($pathArray.Count -ne $segments.Count^) {
 echo $newPath = $pathArray -join ';'
 echo [Environment]::SetEnvironmentVariable('Path', $newPath, 'User'^)
 echo Write-Host 'battest removed from User PATH'

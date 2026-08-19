@@ -278,6 +278,46 @@ def test_match_output_equals_file_missing_is_failure(tmp_path: Path) -> None:
     assert "missing-golden.txt" in failures[0].message
 
 
+def test_match_output_equals_file_none_text_is_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "expected.txt").write_text("hello\n", encoding="utf-8")
+
+    def empty_read(_source_dir: Path, _relative: str) -> tuple[str | None, str | None]:
+        return None, None
+
+    monkeypatch.setattr("battest.assertlib._read_equals_file", empty_read)
+    failures = match_output(
+        "stdout",
+        OutputMatcher(equals_file="expected.txt"),
+        "hello\n",
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "equals_file" in failures[0].message
+
+
+def test_match_files_equals_file_none_text_is_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "out.txt").write_text("hello\n", encoding="utf-8")
+    (tmp_path / "expected.txt").write_text("hello\n", encoding="utf-8")
+
+    def empty_read(_source_dir: Path, _relative: str) -> tuple[str | None, str | None]:
+        return None, None
+
+    monkeypatch.setattr("battest.assertlib._read_equals_file", empty_read)
+    failures = match_files(
+        [FileMatcher(path="out.txt", equals_file="expected.txt")],
+        tmp_path,
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "equals_file" in failures[0].message
+
+
 def test_match_output_equals_file_invalid_utf8_is_failure(tmp_path: Path) -> None:
     golden = tmp_path / "expected.txt"
     golden.write_bytes(b"\xff\xfe not utf-8")

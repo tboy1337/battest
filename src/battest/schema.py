@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import ValidationError
 import yaml
 
-from battest.constants import MAX_FIXTURE_BYTES
+from battest.constants import MAX_FIXTURE_BYTES, MAX_YAML_ALIASES
 from battest.logging_config import get_logger
 from battest.models import (
     Case,
@@ -31,6 +31,42 @@ LOGGER = get_logger("schema")
 
 class SchemaError(ValueError):
     """Raised when a fixture document is missing, malformed, or incomplete."""
+
+
+class _BoundedSafeLoader(yaml.SafeLoader):  # pylint: disable=too-many-ancestors
+    """SafeLoader that rejects fixtures with too many YAML aliases.
+
+    PyYAML's SafeLoader inheritance depth is outside this module's control.
+    """
+
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._battest_alias_count = 0
+
+    def compose_node(
+        self, parent: yaml.nodes.Node | None, index: int
+    ) -> yaml.nodes.Node | None:
+        if self.check_event(yaml.AliasEvent):  # type: ignore[no-untyped-call]
+            self._battest_alias_count += 1
+            if self._battest_alias_count > MAX_YAML_ALIASES:
+                event = self.peek_event()  # type: ignore[no-untyped-call]
+                mark = event.start_mark if event is not None else None
+                raise yaml.composer.ComposerError(
+                    None,
+                    None,
+                    f"YAML alias count exceeds {MAX_YAML_ALIASES}",
+                    mark,
+                )
+        return super().compose_node(parent, index)
+
+
+def _load_yaml_text(text: str) -> object:
+    """Parse YAML text with SafeLoader and an alias cap."""
+    loader = _BoundedSafeLoader(text)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()  # type: ignore[no-untyped-call]
 
 
 def _fixture_byte_size(path: Path) -> int:
@@ -64,7 +100,10 @@ def load_yaml_mapping(path: Path) -> dict[str, Any]:
         raise SchemaError(f"fixture file not found: {path}")
     _fixture_byte_size(path)
     try:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        loaded = _load_yaml_text(path.read_text(encoding="utf-8"))
+    except RecursionError as exc:
+        LOGGER.error("YAML nesting too deep in %s: %s", path, exc)
+        raise SchemaError(f"YAML nesting too deep in {path}") from exc
     except (OSError, UnicodeError) as exc:
         LOGGER.error("cannot read fixture %s: %s", path, exc)
         raise SchemaError(f"cannot read fixture {path}: {exc}") from exc

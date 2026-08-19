@@ -12,6 +12,7 @@ from battest.constants import (
     COMMAND_NAME_PATTERN,
     MAX_JOBS,
     MAX_REGEX_PATTERN_LENGTH,
+    MAX_YAML_ALIASES,
 )
 from battest.models import (
     CallExpectation,
@@ -512,6 +513,79 @@ def test_load_yaml_rejects_oversized_fixture(
         encoding="utf-8",
     )
     with pytest.raises(SchemaError, match="exceeds"):
+        load_cases_from_path(path)
+
+
+def test_load_yaml_accepts_few_aliases(tmp_path: Path) -> None:
+    _write_script(tmp_path)
+    path = tmp_path / "few-aliases.battest.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "description: few aliases",
+                "script: input.cmd",
+                "expect:",
+                "  stdout:",
+                "    equals: &val hello",
+                "  stderr:",
+                "    equals: *val",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cases = load_cases_from_path(path)
+    assert len(cases) == 1
+    assert cases[0].expect.stdout is not None
+    assert cases[0].expect.stdout.equals == "hello"
+    assert cases[0].expect.stderr is not None
+    assert cases[0].expect.stderr.equals == "hello"
+
+
+def test_load_yaml_rejects_too_many_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("battest.schema.MAX_YAML_ALIASES", 2)
+    _write_script(tmp_path)
+    path = tmp_path / "many-aliases.battest.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "description: many aliases",
+                "script: input.cmd",
+                "expect:",
+                "  stdout:",
+                "    equals: &val hello",
+                "  stderr:",
+                "    equals: *val",
+                "  env:",
+                "    FOO: *val",
+                "    BAR: *val",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="alias"):
+        load_cases_from_path(path)
+    assert MAX_YAML_ALIASES == 256
+
+
+def test_load_yaml_rejects_recursion_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_script(tmp_path)
+    path = tmp_path / "nested.battest.yaml"
+    path.write_text(
+        "description: nested\nscript: input.cmd\nexpect:\n  exit_code: 0\n",
+        encoding="utf-8",
+    )
+
+    def boom(_text: str) -> object:
+        raise RecursionError("too deep")
+
+    monkeypatch.setattr("battest.schema._load_yaml_text", boom)
+    with pytest.raises(SchemaError, match="nesting"):
         load_cases_from_path(path)
 
 
