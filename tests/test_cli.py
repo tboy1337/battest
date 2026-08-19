@@ -710,6 +710,7 @@ def test_ci_release_jobs_are_atomic() -> None:
     publish_if = str(publish_pypi.get("if"))
     assert "needs.build-wheels.result == 'success'" in publish_if
     assert "should_publish_pypi" in publish_if
+    assert "should_release == 'false'" in publish_if
     assert publish_pypi.get("environment") == "pypi"
     permissions = publish_pypi.get("permissions")
     assert isinstance(permissions, dict)
@@ -776,6 +777,10 @@ def test_ci_release_jobs_are_atomic() -> None:
         if isinstance(step, dict) and step.get("name")
     ]
     assert "Smoke test executable" in windows_names
+    assert "Install battest for parity checks" in windows_names
+    assert windows_names.index("Install battest for parity checks") < windows_names.index(
+        "Smoke test executable"
+    )
     assert windows_names.index("Smoke test executable") < windows_names.index(
         "Package executable for release"
     )

@@ -568,6 +568,12 @@ jobs:
           pyinstaller battest.spec
         shell: pwsh
 
+      - name: Install battest for parity checks
+        run: |
+          .\venv\Scripts\Activate.ps1
+          python -m pip install -e .
+        shell: pwsh
+
       - name: Smoke test executable
         run: .\scripts\test_exe_smoke.ps1 -ExePath .\dist\battest.exe
         shell: pwsh
@@ -695,6 +701,7 @@ jobs:
         needs.create-release.result == 'success' ||
         (
           needs.check-version.outputs.should_publish_pypi == 'true' &&
+          needs.check-version.outputs.should_release == 'false' &&
           needs.create-release.result == 'skipped'
         )
       )
