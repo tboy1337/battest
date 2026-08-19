@@ -174,10 +174,12 @@ jobs:
           BATTEST_EXTRA_ARGS: '["--jobs","1"]'
           BATTEST_SAFE_DEFAULTS: "true"
         run: |
-          # Child process so a non-zero battest exit does not emit ##[error]
-          # the way `uses: ./` + continue-on-error does.
-          pwsh -NoProfile -File "$env:GITHUB_WORKSPACE/scripts/run-battest-action.ps1"
-          if ($LASTEXITCODE -eq 0) {
+          # Dot-source so a non-zero battest exit is a return value, not
+          # a step failure / ##[error] annotation.
+          $PSNativeCommandUseErrorActionPreference = $false
+          . "$env:GITHUB_WORKSPACE/scripts/run-battest-action.ps1"
+          $code = Invoke-BattestAction
+          if ($code -eq 0) {
             throw "expected battest to fail when the discovery path is missing"
           }
 
