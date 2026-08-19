@@ -1860,7 +1860,8 @@ def test_cwd_outside_workdir_appends_warning(
         _timeout: float,
         _encoding: str,
     ) -> tuple[int, str, str, bool]:
-        (cwd / CWD_DUMP_NAME).write_text("C:\\Windows\n", encoding="utf-8")
+        outside = tmp_path / "outside-of-workdir"
+        (cwd / CWD_DUMP_NAME).write_text(f"{outside}\n", encoding="utf-8")
         return 0, "", "", False
 
     monkeypatch.setattr("battest.engine._run_process", fake_run)
