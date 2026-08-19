@@ -66,7 +66,8 @@ forms in overlay args warn. Mock `exit_code` values must be 0–255 (cmd
 the relative path from the fixture file. `script`, `setup`, `teardown`,
 `copy`, `equals_file`, and `files[].path` values cannot be rooted, cannot
 contain `..`, and cannot name reserved Windows devices. Missing `equals_file`
-targets are schema errors at load time, not later case failures. Sibling files
+targets are schema errors at load time, not later case failures. Fixture YAML
+larger than 1 MiB (1,048,576 bytes) is a schema error at load time. Sibling files
 that are not the script, setup, or teardown still need `copy:`. `script`,
 `setup`, and `teardown` are copied into the work directory using that same
 relative layout, so `%~dp0` is the workdir copy of the script directory.

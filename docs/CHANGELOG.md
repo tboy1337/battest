@@ -5,6 +5,25 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-08-19
+
+Production audit: host env isolation, destructive-path warnings, installer
+release lookup, CodeQL, and PyInstaller spec cleanup.
+
+- Inherited host `BATTEST_*` variables are stripped before the script runs, so
+  a runner or CI job cannot leak helper names into the case. Fixture `env` can
+  still set `BATTEST_*` values.
+- Destructive-internal absolute-path warnings match quoted paths with spaces
+  (`del "C:\Program Files\x.txt"`) and switches with a colon
+  (`del /a:h C:\Windows\Temp\x.txt`).
+- Fixture YAML larger than 1 MiB is a schema error at load time.
+- CodeQL Rust analysis fetches the locked `stub/` crate graph before init so
+  rust-analyzer can expand macros. Actions stay on version tags, not commit
+  SHAs.
+- The standalone installer queries GitHub `releases/latest` instead of paging
+  100 releases.
+- PyInstaller spec no longer passes removed WinSxS/`cipher` Analysis arguments.
+
 ## [1.0.3] - 2026-08-15
 
 Production audit: installer integrity, Windows device path confinement, and
@@ -98,6 +117,7 @@ Rust stub helper.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
+[1.0.4]: https://github.com/tboy1337/battest/releases/tag/v1.0.4
 [1.0.3]: https://github.com/tboy1337/battest/releases/tag/v1.0.3
 [1.0.2]: https://github.com/tboy1337/battest/releases/tag/v1.0.2
 [1.0.1]: https://github.com/tboy1337/battest/releases/tag/v1.0.1

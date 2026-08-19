@@ -400,6 +400,8 @@ def test_installer_verifies_github_asset_digest() -> None:
     assert "battest-installer" in release
     assert "Tls12" in release
     assert "digest" in release
+    assert "releases/latest" in release
+    assert "per_page=100" not in release
     hasher = (
         REPO_ROOT / "scripts" / "installer_ps" / "Test-BattestArchiveHash.ps1"
     ).read_text(encoding="utf-8")
@@ -446,3 +448,7 @@ def test_battest_spec_is_console_onefile_without_icon() -> None:
     assert "battest/data" in spec
     assert "icon=" not in spec
     assert '"subprocess"' not in spec
+    assert "win_no_prefer_redirects" not in spec
+    assert "win_private_assemblies" not in spec
+    assert "block_cipher" not in spec
+    assert "cipher=" not in spec

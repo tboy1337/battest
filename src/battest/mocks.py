@@ -21,7 +21,11 @@ LOGGER = get_logger("mocks")
 _ABS_PATH_RE = re.compile(
     r"\b(?P<verb>"
     + "|".join(re.escape(verb) for verb in INTERNAL_DESTRUCTIVE_VERBS)
-    + r")\b(?:\s+/[A-Za-z]+)*\s+\"?(?P<target>(?:[A-Za-z]:[\\/]|\\\\)[^\s&|<>\"]+)\"?",
+    + r")\b(?:\s+/[^\s&|<>\"]+)*\s+(?:"
+    r"\"(?P<quoted>(?:[A-Za-z]:[\\/]|\\\\)[^\"]+)\""
+    r"|"
+    r"(?P<unquoted>(?:[A-Za-z]:[\\/]|\\\\)[^\s&|<>\"]+)"
+    r")",
     re.IGNORECASE,
 )
 
@@ -46,7 +50,9 @@ def warn_internal_absolute_paths(script_text: str) -> list[str]:
     warnings: list[str] = []
     for match in _ABS_PATH_RE.finditer(script_text):
         verb = match.group("verb")
-        target = match.group("target")
+        target = match.group("quoted") or match.group("unquoted")
+        if not target:
+            continue
         message = (
             f"internal command '{verb}' targets absolute path '{target}' "
             "and cannot be PATH-mocked; run that case in a disposable VM"

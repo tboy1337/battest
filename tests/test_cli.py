@@ -583,6 +583,37 @@ def test_ci_retries_release_when_version_tag_is_missing() -> None:
     assert "tomllib" in str(version_step.get("run"))
 
 
+def test_ci_codeql_rust_fetches_locked_crate_graph() -> None:
+    workflow = _load_ci_workflow()
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    codeql = jobs["codeql"]
+    assert isinstance(codeql, dict)
+    steps = codeql["steps"]
+    assert isinstance(steps, list)
+    names = [
+        step.get("name") for step in steps if isinstance(step, dict) and "name" in step
+    ]
+    assert names.index("Set up Rust") < names.index("Fetch Rust crate graph")
+    assert names.index("Fetch Rust crate graph") < names.index("Initialize CodeQL")
+    fetch = next(
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == "Fetch Rust crate graph"
+    )
+    assert fetch.get("if") == "matrix.language == 'rust'"
+    assert "cargo fetch --locked --manifest-path stub/Cargo.toml" in str(
+        fetch.get("run")
+    )
+    uses = [
+        str(step.get("uses", ""))
+        for step in steps
+        if isinstance(step, dict) and step.get("uses")
+    ]
+    assert any(item.startswith("github/codeql-action/init@") for item in uses)
+    assert any(item.startswith("dtolnay/rust-toolchain@") for item in uses)
+
+
 def test_ci_release_jobs_are_atomic() -> None:
     workflow = _load_ci_workflow()
     jobs = workflow["jobs"]

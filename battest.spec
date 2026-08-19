@@ -11,8 +11,6 @@ Generate ``file_version_info.txt`` before building:
     python scripts/generate_file_version_info.py
 """
 
-block_cipher = None
-
 a = Analysis(
     ["src/battest/__main__.py"],
     pathex=["src"],
@@ -55,13 +53,10 @@ a = Analysis(
         "sqlite3",
         "_sqlite3",
     ],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure, a.zipped_data)
 
 exe = EXE(
     pyz,

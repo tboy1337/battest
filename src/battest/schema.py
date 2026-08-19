@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from importlib import resources
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from pydantic import ValidationError
 import yaml
 
+from battest.constants import MAX_FIXTURE_BYTES
 from battest.logging_config import get_logger
 from battest.models import (
     Case,
@@ -31,6 +33,20 @@ class SchemaError(ValueError):
     """Raised when a fixture document is missing, malformed, or incomplete."""
 
 
+def _fixture_byte_size(path: Path) -> int:
+    """Return the fixture file size, or raise SchemaError on OSError or oversize."""
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        LOGGER.error("cannot stat fixture %s: %s", path, exc)
+        raise SchemaError(f"cannot read fixture {path}: {exc}") from exc
+    if size > MAX_FIXTURE_BYTES:
+        LOGGER.error("fixture %s is %s bytes; max is %s", path, size, MAX_FIXTURE_BYTES)
+        raise SchemaError(f"fixture file exceeds {MAX_FIXTURE_BYTES} bytes: {path}")
+    LOGGER.debug("fixture %s size=%s", path, size)
+    return size
+
+
 def schema_payload() -> dict[str, Any]:
     """Return the bundled JSON Schema object."""
     traversable = resources.files("battest") / "data" / "battest-expect.schema.json"
@@ -46,6 +62,7 @@ def load_yaml_mapping(path: Path) -> dict[str, Any]:
     LOGGER.debug("loading yaml %s", path)
     if not path.is_file():
         raise SchemaError(f"fixture file not found: {path}")
+    _fixture_byte_size(path)
     try:
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError) as exc:

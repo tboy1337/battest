@@ -222,6 +222,10 @@ jobs:
         with:
           toolchain: "1.97.1"
 
+      - name: Fetch Rust crate graph
+        if: matrix.language == 'rust'
+        run: cargo fetch --locked --manifest-path stub/Cargo.toml
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:

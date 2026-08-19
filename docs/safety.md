@@ -23,12 +23,16 @@ Mitigations that **are** included:
 - `taskkill /F /T` on timeout, then a bounded wait so a surviving child cannot
   hang the runner
 - Helper `BATTEST_*` variables are not injected into the script environment.
-  The wrapper calls the copied script via `%~dp0` and writes the env dump next
-  to the wrapper, so a script cannot redirect that dump by changing variables.
+  Inherited host `BATTEST_*` keys are stripped before the script runs so a
+  runner or CI job cannot leak helper names into the case. Fixture `env` can
+  still set `BATTEST_*` values. The wrapper calls the copied script via `%~dp0`
+  and writes the env dump next to the wrapper, so a script cannot redirect that
+  dump by changing variables.
 - Warnings for destructive cmd internals (`copy`, `del`, `erase`, `move`,
   `rd`, `ren`, `rename`, `rmdir`) used with absolute paths, including
-  `C:\...`, `C:/...`, quoted targets, and `/flag` switches such as
-  `del /f /q C:\Windows\Temp\x.txt`
+  `C:\...`, `C:/...`, quoted targets with spaces
+  (`del "C:\Program Files\x.txt"`), and `/flag` switches such as
+  `del /f /q C:\Windows\Temp\x.txt` and `del /a:h C:\Windows\Temp\x.txt`
 
 Mitigations that **are not** included:
 

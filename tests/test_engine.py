@@ -329,6 +329,35 @@ def test_combined_env_without_fixture_path_keeps_inherited(
     assert env["FOO"] == "bar"
 
 
+def test_combined_env_strips_inherited_battest_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "battest.engine.os.environ",
+        {
+            "PATH": "C:\\Windows",
+            "BATTEST_SUT": "leaked",
+            "battest_envfile": "also-leaked",
+            "FOO": "keep",
+        },
+    )
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        env={"BATTEST_CUSTOM": "from-fixture"},
+        expect=Expect(),
+    )
+    env = _combined_env(case, tmp_path, None)
+    assert "BATTEST_SUT" not in env
+    assert "battest_envfile" not in env
+    assert env["BATTEST_CUSTOM"] == "from-fixture"
+    assert env["FOO"] == "keep"
+
+
 def test_evaluate_after_run_errors_when_call_logs_unreadable(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
@@ -1451,7 +1480,10 @@ def test_deadline_starts_after_prepare(
 
 
 @pytest.mark.windows
-def test_engine_hides_battest_helper_env_from_sut(tmp_path: Path) -> None:
+def test_engine_hides_battest_helper_env_from_sut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BATTEST_SUT", "leaked-from-host")
     case = _write_case(
         tmp_path,
         "@echo off\r\necho SUT=%BATTEST_SUT%\r\nexit /b 0\r\n",

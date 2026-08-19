@@ -37,9 +37,9 @@ Describe 'Installer PowerShell PSScriptAnalyzer' {
 }
 
 Describe 'Get-LatestBattestRelease.ps1' {
-    It 'outputs NOT_FOUND when no release is available' {
+    It 'outputs NOT_FOUND when the latest-release API fails' {
         $fixturePath = Join-Path $script:InstallerPsRoot 'Get-LatestBattestRelease.ps1'
-        Mock Invoke-RestMethod { return @() }
+        Mock Invoke-RestMethod { throw '404' }
 
         $output = & $fixturePath
         $LASTEXITCODE | Should -Be 0
@@ -49,20 +49,18 @@ Describe 'Get-LatestBattestRelease.ps1' {
     It 'outputs URL, tag, and digest when a matching asset exists' {
         $fixturePath = Join-Path $script:InstallerPsRoot 'Get-LatestBattestRelease.ps1'
         Mock Invoke-RestMethod {
-            return @(
-                [PSCustomObject]@{
-                    prerelease = $false
-                    draft      = $false
-                    tag_name   = 'v0.1.0'
-                    assets     = @(
-                        [PSCustomObject]@{
-                            name                 = 'Battest-v0.1.0.zip'
-                            browser_download_url = 'https://example.com/Battest-v0.1.0.zip'
-                            digest               = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-                        }
-                    )
-                }
-            )
+            return [PSCustomObject]@{
+                prerelease = $false
+                draft      = $false
+                tag_name   = 'v0.1.0'
+                assets     = @(
+                    [PSCustomObject]@{
+                        name                 = 'Battest-v0.1.0.zip'
+                        browser_download_url = 'https://example.com/Battest-v0.1.0.zip'
+                        digest               = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+                    }
+                )
+            }
         }
 
         $output = & $fixturePath
@@ -73,24 +71,38 @@ Describe 'Get-LatestBattestRelease.ps1' {
     It 'outputs NO_DIGEST when the asset digest is missing' {
         $fixturePath = Join-Path $script:InstallerPsRoot 'Get-LatestBattestRelease.ps1'
         Mock Invoke-RestMethod {
-            return @(
-                [PSCustomObject]@{
-                    prerelease = $false
-                    draft      = $false
-                    tag_name   = 'v0.1.0'
-                    assets     = @(
-                        [PSCustomObject]@{
-                            name                 = 'Battest-v0.1.0.zip'
-                            browser_download_url = 'https://example.com/Battest-v0.1.0.zip'
-                        }
-                    )
-                }
-            )
+            return [PSCustomObject]@{
+                prerelease = $false
+                draft      = $false
+                tag_name   = 'v0.1.0'
+                assets     = @(
+                    [PSCustomObject]@{
+                        name                 = 'Battest-v0.1.0.zip'
+                        browser_download_url = 'https://example.com/Battest-v0.1.0.zip'
+                    }
+                )
+            }
         }
 
         $output = & $fixturePath
         $LASTEXITCODE | Should -Be 0
         $output | Should -Be 'NO_DIGEST'
+    }
+
+    It 'outputs NOT_FOUND when the latest release is a prerelease' {
+        $fixturePath = Join-Path $script:InstallerPsRoot 'Get-LatestBattestRelease.ps1'
+        Mock Invoke-RestMethod {
+            return [PSCustomObject]@{
+                prerelease = $true
+                draft      = $false
+                tag_name   = 'v0.2.0-rc.1'
+                assets     = @()
+            }
+        }
+
+        $output = & $fixturePath
+        $LASTEXITCODE | Should -Be 0
+        $output | Should -Be 'NOT_FOUND'
     }
 }
 

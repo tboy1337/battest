@@ -147,4 +147,27 @@ def test_warn_internal_absolute_paths() -> None:
     assert flagged
     quoted_forward = warn_internal_absolute_paths('rd /s /q "C:/Windows/Temp"')
     assert quoted_forward
+    spaced = warn_internal_absolute_paths(r'del "C:\Program Files\x.txt"')
+    assert spaced
+    assert r"C:\Program Files\x.txt" in spaced[0]
+    colon_switch = warn_internal_absolute_paths(r"del /a:h C:\Windows\Temp\x.txt")
+    assert colon_switch
+    assert r"C:\Windows\Temp\x.txt" in colon_switch[0]
     assert warn_internal_absolute_paths(r"xcopy C:\Windows\Temp\x.txt") == []
+
+
+def test_warn_internal_absolute_paths_skips_empty_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeMatch:
+        def group(self, name: str) -> str | None:
+            if name == "verb":
+                return "del"
+            return None
+
+    class FakePattern:
+        def finditer(self, _text: str) -> list[FakeMatch]:
+            return [FakeMatch()]
+
+    monkeypatch.setattr("battest.mocks._ABS_PATH_RE", FakePattern())
+    assert warn_internal_absolute_paths(r"del C:\Windows\Temp\x.txt") == []

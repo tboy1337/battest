@@ -2,10 +2,14 @@
 $tls = [Net.SecurityProtocolType]::Tls12
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor $tls
 $headers = @{ 'User-Agent' = 'battest-installer'; 'Accept' = 'application/vnd.github+json' }
-$uri = 'https://api.github.com/repos/tboy1337/battest/releases?per_page=100'
-$releases = Invoke-RestMethod -Uri $uri -Headers $headers
-$release = $releases | Where-Object { -not $_.prerelease -and -not $_.draft } | Select-Object -First 1
-if (-not $release) { Write-Output 'NOT_FOUND'; exit 0 }
+$uri = 'https://api.github.com/repos/tboy1337/battest/releases/latest'
+try {
+    $release = Invoke-RestMethod -Uri $uri -Headers $headers
+}
+catch {
+    Write-Output 'NOT_FOUND'; exit 0
+}
+if (-not $release -or $release.prerelease -or $release.draft) { Write-Output 'NOT_FOUND'; exit 0 }
 $asset = $release.assets | Where-Object { $_.name -like 'Battest-v*.zip' } | Select-Object -First 1
 if (-not $asset) { Write-Output 'NOT_FOUND'; exit 0 }
 $digest = $null

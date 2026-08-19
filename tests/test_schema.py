@@ -33,6 +33,7 @@ from battest.models import (
 from battest.schema import (
     SchemaError,
     _confine_to_fixture,
+    _fixture_byte_size,
     fixture_stem,
     load_cases_from_path,
     parse_document,
@@ -484,6 +485,33 @@ def test_load_yaml_rejects_oserror(
 
     monkeypatch.setattr(Path, "read_text", boom)
     with pytest.raises(SchemaError, match="cannot read fixture"):
+        load_cases_from_path(path)
+
+
+def test_load_yaml_rejects_stat_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "locked-stat.battest.yaml"
+    path.write_text("description: x\nexpect:\n  exit_code: 0\n", encoding="utf-8")
+
+    def boom_stat(self: Path, *args: object, **kwargs: object) -> object:
+        raise OSError("locked-stat")
+
+    monkeypatch.setattr(Path, "stat", boom_stat)
+    with pytest.raises(SchemaError, match="cannot read fixture"):
+        _fixture_byte_size(path)
+
+
+def test_load_yaml_rejects_oversized_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("battest.schema.MAX_FIXTURE_BYTES", 32)
+    path = tmp_path / "big.battest.yaml"
+    path.write_text(
+        "description: x\nexpect:\n  exit_code: 0\n" + ("x" * 64),
+        encoding="utf-8",
+    )
+    with pytest.raises(SchemaError, match="exceeds"):
         load_cases_from_path(path)
 
 

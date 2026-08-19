@@ -315,10 +315,14 @@ REM Write PowerShell script to fetch latest release URL, tag, and digest
 echo $tls = [Net.SecurityProtocolType]::Tls12
 echo [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor $tls
 echo $headers = @{ 'User-Agent' = 'battest-installer'; 'Accept' = 'application/vnd.github+json' }
-echo $uri = 'https://api.github.com/repos/tboy1337/battest/releases?per_page=100'
-echo $releases = Invoke-RestMethod -Uri $uri -Headers $headers
-echo $release = $releases ^| Where-Object { -not $_.prerelease -and -not $_.draft } ^| Select-Object -First 1
-echo if (-not $release^) { Write-Output 'NOT_FOUND'; exit 0 }
+echo $uri = 'https://api.github.com/repos/tboy1337/battest/releases/latest'
+echo try {
+echo     $release = Invoke-RestMethod -Uri $uri -Headers $headers
+echo }
+echo catch {
+echo     Write-Output 'NOT_FOUND'; exit 0
+echo }
+echo if (-not $release -or $release.prerelease -or $release.draft^) { Write-Output 'NOT_FOUND'; exit 0 }
 echo $asset = $release.assets ^| Where-Object { $_.name -like 'Battest-v*.zip' } ^| Select-Object -First 1
 echo if (-not $asset^) { Write-Output 'NOT_FOUND'; exit 0 }
 echo $digest = $null

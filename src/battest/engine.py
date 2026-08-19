@@ -15,6 +15,7 @@ from typing import Protocol
 
 from battest.assertlib import evaluate_case
 from battest.constants import (
+    BATTEST_PREFIX,
     ENV_DUMP_NAME,
     KILL_DRAIN_TIMEOUT_SECONDS,
     TEARDOWN_MIN_SECONDS,
@@ -275,6 +276,13 @@ def collapse_path_keys(env: dict[str, str]) -> str:
     return kept_key
 
 
+def _strip_inherited_helper_vars(env: dict[str, str]) -> None:
+    """Drop host BATTEST_* keys so runner/CI helper names cannot leak into the SUT."""
+    for key in [name for name in env if name.upper().startswith(BATTEST_PREFIX)]:
+        LOGGER.debug("dropping inherited helper env %s", key)
+        env.pop(key)
+
+
 def _overlay_case_env(env: dict[str, str], case_env: dict[str, str]) -> None:
     """Apply fixture env. PATH replaces inherited PATH regardless of key case."""
     overlay: tuple[str, str] | None = None
@@ -303,6 +311,7 @@ def _combined_env(
     mock_dir: Path | None,
 ) -> dict[str, str]:
     env = {str(key): str(value) for key, value in os.environ.items()}
+    _strip_inherited_helper_vars(env)
     collapse_path_keys(env)
     _overlay_case_env(env, case.env)
     env["NoDefaultCurrentDirectoryInEXEPath"] = "1"
