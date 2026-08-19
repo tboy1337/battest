@@ -5,6 +5,11 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+- Installer tests assert the parsed GitHub asset-host allowlist and URI host
+  check. The regex timeout test builds its nested-quantifier pattern at
+  runtime so CodeQL does not treat those fixtures as URL sanitizers or a
+  shipped ReDoS expression.
+
 ## [1.0.8] - 2026-08-20
 
 Production audit: Job assign fail-loud, env-dump integrity, installer host

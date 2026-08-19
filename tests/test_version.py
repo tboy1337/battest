@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError
 import importlib.util
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tomllib
@@ -406,8 +407,21 @@ def test_installer_verifies_github_asset_digest() -> None:
     assert "Tls12" in release
     assert "digest" in release
     assert "BAD_URL" in release
-    assert "github.com" in release
-    assert "objects.githubusercontent.com" in release
+    allowlist = re.search(
+        r"\$allowedHosts\s*=\s*@\((.*?)\)",
+        release,
+        flags=re.DOTALL,
+    )
+    assert allowlist is not None
+    hosts = re.findall(r"'([^']+)'", allowlist.group(1))
+    assert hosts == [
+        "github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
+    ]
+    assert "[Uri]$url" in release
+    assert "$parsed.Scheme -ne 'https'" in release
+    assert "$allowedHosts -notcontains $parsed.Host" in release
     assert "releases/latest" in release
     assert "per_page=100" not in release
     hasher = (
