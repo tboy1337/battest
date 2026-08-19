@@ -99,9 +99,8 @@ pip install battest
 ```
 
 Wheels on PyPI are published from the GitHub `pypi` environment with
-`pypa/gh-action-pypi-publish@release/v1` and the project-scoped
-`PYPI_BATTEST` secret until a matching Trusted Publisher is registered on
-PyPI. See [Security](docs/SECURITY.md).
+`twine upload --skip-existing` and the project-scoped `PYPI_BATTEST` secret.
+See [Security](docs/SECURITY.md).
 
 ### Standalone executable (no Python)
 

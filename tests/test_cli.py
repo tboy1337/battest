@@ -604,19 +604,51 @@ def test_ci_dependency_graph_does_not_block_release() -> None:
     check_version = jobs["check-version"]
     assert isinstance(dependency_graph, dict)
     assert isinstance(check_version, dict)
-    assert dependency_graph.get("continue-on-error") is True
+    assert dependency_graph.get("continue-on-error") is not True
     submit = next(
         step
         for step in dependency_graph["steps"]
         if isinstance(step, dict) and step.get("name") == "Submit dependency snapshot"
     )
-    assert submit.get("continue-on-error") is True
+    assert submit.get("continue-on-error") is not True
     needs = check_version["needs"]
     assert isinstance(needs, list)
     assert "dependency-graph" not in needs
     assert "test-windows" in needs
     assert "action-windows" in needs
     assert "package-smoke" in needs
+
+
+def test_ci_action_dogfood_records_discovery_failure_without_continue_on_error() -> (
+    None
+):
+    workflow = _load_ci_workflow()
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    action_windows = jobs["action-windows"]
+    assert isinstance(action_windows, dict)
+    steps = action_windows["steps"]
+    assert isinstance(steps, list)
+    fail_step = next(
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and step.get("name") == "Dogfood missing discovery path"
+    )
+    assert fail_step.get("continue-on-error") is not True
+    assert fail_step.get("uses") is None
+    fail_run = str(fail_step.get("run"))
+    assert "run-battest-action.ps1" in fail_run
+    assert "pwsh -NoProfile -File" in fail_run
+    assert "expected battest to fail" in fail_run
+    assert_step = next(
+        step
+        for step in steps
+        if isinstance(step, dict)
+        and step.get("name") == "Assert JUnit written on discovery failure"
+    )
+    assert_run = str(assert_step.get("run"))
+    assert "does not exist" in assert_run
 
 
 def test_ci_retries_release_when_version_tag_is_missing() -> None:
@@ -753,15 +785,15 @@ def test_ci_release_jobs_are_atomic() -> None:
         for step in publish_pypi["steps"]
         if isinstance(step, dict) and step.get("name") == "Publish to PyPI"
     )
-    assert str(publish.get("uses", "")).startswith(
-        "pypa/gh-action-pypi-publish@release/"
-    )
-    assert publish.get("with", {}).get("skip-existing") is True
-    assert "secrets.PYPI_BATTEST" in str(publish.get("with", {}).get("password"))
+    publish_run = str(publish.get("run"))
+    publish_env = publish.get("env")
+    assert isinstance(publish_env, dict)
+    assert "twine upload --skip-existing" in publish_run
+    assert "secrets.PYPI_BATTEST" in str(publish_env.get("TWINE_PASSWORD"))
     workflow_text = (_repo_root() / ".github" / "workflows" / "CI.yml").read_text(
         encoding="utf-8"
     )
-    assert "TWINE_PASSWORD" not in workflow_text
+    assert "pypa/gh-action-pypi-publish" not in workflow_text
     assert "workflow_dispatch:" in workflow_text
     assert "force:" in workflow_text
     assert "default: false" in workflow_text

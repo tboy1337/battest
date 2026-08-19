@@ -166,28 +166,35 @@ jobs:
             throw "junit-xml is empty: $env:BATTEST_JUNIT"
           }
 
-      - id: battest-fail
-        continue-on-error: true
-        uses: ./
-        with:
-          path: missing-battest-fixtures
-          extra-args: '["--jobs","1"]'
-          safe-defaults: "true"
+      - name: Dogfood missing discovery path
+        id: battest-fail
+        shell: pwsh
+        env:
+          BATTEST_PATH: missing-battest-fixtures
+          BATTEST_EXTRA_ARGS: '["--jobs","1"]'
+          BATTEST_SAFE_DEFAULTS: "true"
+        run: |
+          # Child process so a non-zero battest exit does not emit ##[error]
+          # the way `uses: ./` + continue-on-error does.
+          pwsh -NoProfile -File "$env:GITHUB_WORKSPACE/scripts/run-battest-action.ps1"
+          if ($LASTEXITCODE -eq 0) {
+            throw "expected battest to fail when the discovery path is missing"
+          }
 
       - name: Assert JUnit written on discovery failure
         shell: pwsh
         env:
           BATTEST_JUNIT: ${{ steps.battest-fail.outputs.junit-xml }}
-          BATTEST_OUTCOME: ${{ steps.battest-fail.outcome }}
         run: |
-          if ($env:BATTEST_OUTCOME -eq "success") {
-            throw "expected battest to fail when the discovery path is missing"
-          }
           if (-not (Test-Path -LiteralPath $env:BATTEST_JUNIT)) {
             throw "junit-xml output is missing: $env:BATTEST_JUNIT"
           }
           if ((Get-Item -LiteralPath $env:BATTEST_JUNIT).Length -lt 1) {
             throw "junit-xml is empty: $env:BATTEST_JUNIT"
+          }
+          $text = Get-Content -LiteralPath $env:BATTEST_JUNIT -Raw
+          if ($text -notmatch 'does not exist') {
+            throw "junit-xml does not record the missing discovery path"
           }
 
       - name: Analyze PowerShell action script
@@ -425,7 +432,6 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     permissions:
       contents: write
     steps:
@@ -434,7 +440,6 @@ jobs:
           persist-credentials: false
 
       - name: Submit dependency snapshot
-        continue-on-error: true
         uses: advanced-security/component-detection-dependency-submission-action@v0.1.4
         with:
           detectorArgs: Pip=EnableIfDefaultOff
@@ -718,12 +723,16 @@ jobs:
           name: python-dist
           path: dist
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
-          skip-existing: true
-          # Trusted Publishing is not registered on this project yet, so OIDC
-          # fails with invalid-publisher. The existing project-scoped token
-          # remains the upload credential until a GitHub publisher is added
-          # on PyPI (owner tboy1337, repo battest, workflow CI.yml, env pypi).
-          password: ${{ secrets.PYPI_BATTEST }}
+          python-version: "3.14"
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_BATTEST }}
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+          python -m twine upload --skip-existing dist/*
