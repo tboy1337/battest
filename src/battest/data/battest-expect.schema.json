@@ -61,7 +61,7 @@
     "newlineMode": { "type": "string", "enum": ["auto", "crlf", "lf"] },
     "argToken": {
       "type": "string",
-      "pattern": "^[^\"&|<>^\\r\\n]*$"
+      "pattern": "^[^\"%!&|<>^\\r\\n]*$"
     },
     "outputMatcher": {
       "type": "object",

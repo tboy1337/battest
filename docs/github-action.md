@@ -1,7 +1,7 @@
 # GitHub Action
 
 The composite action lives at the repository root (`action.yml`) so consumers
-can write `uses: tboy1337/battest@v1.0.6`. Pin a published release tag rather
+can write `uses: tboy1337/battest@v1.0.7`. Pin a published release tag rather
 than a floating branch. Do not pin this action to a commit SHA.
 It must run on a **Windows** runner (`runs-on: windows-*`).
 
@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: battest
-        uses: tboy1337/battest@v1.0.6
+        uses: tboy1337/battest@v1.0.7
         with:
           path: tests
           safe-defaults: "true"

@@ -34,6 +34,16 @@ def test_main_without_command_is_usage() -> None:
     assert main([]) == 2
 
 
+def test_main_calls_freeze_support(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[bool] = []
+    monkeypatch.setattr(
+        "battest.cli.multiprocessing.freeze_support",
+        lambda: called.append(True),
+    )
+    assert main([]) == 2
+    assert called == [True]
+
+
 def test_main_no_fixtures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("battest.cli.require_windows", lambda: None)
     assert main(["run", str(tmp_path)]) == 2
@@ -614,6 +624,9 @@ def test_ci_retries_release_when_version_tag_is_missing() -> None:
     assert "should_release=true" in script
     assert "should_release=false" in script
     assert "should_publish_pypi=true" in script
+    assert "should_publish_pypi=false" in script
+    assert "Skipping GitHub assets and PyPI" in script
+    assert "use workflow_dispatch to retry publish" in script
     assert "github.event.inputs.force" in script
     assert "python scripts/read_git_pyproject_version.py HEAD^" in script
     assert "subprocess.check_output(['git', 'show', 'HEAD^:pyproject.toml'])" not in (
@@ -774,6 +787,9 @@ def test_ci_package_smoke_builds_and_checks_dist() -> None:
     assert "python -m build" in str(build.get("run"))
     assert "twine check dist/*" in str(check.get("run"))
     assert "import battest" in str(install.get("run"))
+    assert "console_scripts" in str(install.get("run"))
+    assert "battest_stub.exe" in str(install.get("run"))
+    assert "stub_executable" in str(install.get("run"))
 
 
 def test_ci_cancels_in_progress_pull_requests_only() -> None:

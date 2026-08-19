@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import math
+import multiprocessing
 from pathlib import Path
 import sys
 
@@ -154,6 +155,7 @@ def _run_command(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the battest console script."""
+    multiprocessing.freeze_support()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command != "run":

@@ -90,6 +90,7 @@ def test_schema_payload_is_object() -> None:
     exit_schema = payload["$defs"]["mockSpec"]["properties"]["exit_code"]
     assert exit_schema["minimum"] == 0
     assert exit_schema["maximum"] == 255
+    assert payload["$defs"]["argToken"]["pattern"] == '^[^"%!&|<>^\\r\\n]*$'
 
 
 def test_schema_payload_rejects_non_object(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -299,10 +300,22 @@ def test_invalid_tilde_in_script_and_args(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    with pytest.raises(SchemaError, match="metacharacters"):
+        load_cases_from_path(manifest)
+    manifest.write_text(
+        "\n".join(
+            [
+                "description: tilde script",
+                "script: run.cmd",
+                "expect:",
+                "  exit_code: 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
     cases = load_cases_from_path(manifest)
     joined = " ".join(cases[0].warnings)
     assert "%~q1" in joined
-    assert "%~*" in joined
 
 
 def test_script_read_oserror_is_schema_error(
@@ -453,9 +466,8 @@ def test_params_overlay_invalid_tilde_in_args_warns(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    cases = load_cases_from_path(manifest)
-    overlay = cases[1]
-    assert any("%~*" in item for item in overlay.warnings)
+    with pytest.raises(SchemaError, match="metacharacters"):
+        load_cases_from_path(manifest)
 
 
 def test_invalid_yaml(tmp_path: Path) -> None:
@@ -1550,6 +1562,24 @@ def test_args_reject_cmd_metacharacters() -> None:
         )
     with pytest.raises(ValidationError, match="metacharacters"):
         ParamOverlay(id="x", args=['a"b'])
+    with pytest.raises(ValidationError, match="metacharacters"):
+        CaseDocument.model_validate(
+            {
+                "description": "percent args",
+                "script": "run.cmd",
+                "args": ["%PATH%"],
+                "expect": {"exit_code": 0},
+            }
+        )
+    with pytest.raises(ValidationError, match="metacharacters"):
+        CaseDocument.model_validate(
+            {
+                "description": "bang args",
+                "script": "run.cmd",
+                "args": ["!var!"],
+                "expect": {"exit_code": 0},
+            }
+        )
 
 
 def test_empty_expect_warns(tmp_path: Path) -> None:

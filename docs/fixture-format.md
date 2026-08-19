@@ -60,8 +60,9 @@ params:
 If `params` is present, battest runs the base document **and** each overlay.
 Overlay ids become `name[id]` and must be unique. Overlay `mocks`, `allow`, and
 `args` are validated the same way as the base document: mocking a cmd.exe
-internal is a schema error, `allow` of an internal warns, and invalid `%~`
-forms in overlay args warn. Mock `exit_code` values must be 0–255 because the
+internal is a schema error, `allow` of an internal warns, and `args` tokens
+that contain `%` or `!` are a schema error (so invalid `%~` forms cannot reach
+cmd). Mock `exit_code` values must be 0–255 because the
 PATH-mock stub is an 8-bit process. `expect.exit_code` may be any integer,
 including cmd `ERRORLEVEL` 9009 for a missing external. `copy` entries are
 placed in the isolated work dir using the relative path from the fixture
@@ -133,7 +134,7 @@ stdout `newline: auto`). Optional `newline` on a file matcher uses the same
 absence and cannot be combined with content matchers. `not_called: true`
 cannot be combined with `args_contains`. A matcher with only `newline: lf` or
 `newline: crlf` still enforces those line endings. `args` tokens cannot
-contain `"`, `&`, `|`, `<`, `>`, `^`, CR, or LF because `cmd /c` re-parses
+contain `"`, `%`, `!`, `&`, `|`, `<`, `>`, `^`, CR, or LF because `cmd /c` re-parses
 them after CreateProcess quoting.
 
 ## Environment matchers

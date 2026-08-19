@@ -24,15 +24,20 @@ Mitigations that **are** included:
   budget. If the remaining budget is already gone, setup and the script are
   not spawned. After expiry, teardown still gets at least five seconds.
 - Windows Job Objects with `KILL_ON_JOB_CLOSE`. `cmd.exe` is started
-  suspended, assigned to the job, then resumed. The job handle is closed in
-  `finally` so leftover children die with the runner. `taskkill /F /T` remains
-  a fallback; if a process is still alive after that, the case is TIMEOUT or
+  suspended, assigned to the job, then resumed. Timeout and output overflow
+  close the job handle first so leftover children die, then `taskkill /F /T`
+  if anything is still alive. Capture threads join only after that kill. A
+  failed resume or missing process handle is a case `ERROR`; battest does not
+  leave a suspended `cmd.exe` until the timeout. The job handle is also closed
+  in `finally`. If a process is still alive after kill, the case is TIMEOUT or
   ERROR and a warning names the pid.
 - Captured stdout and stderr are capped at 10 MiB each. Overflow kills the job
-  and is a case `ERROR` with truncated output kept for the report.
+  first and is a case `ERROR` with truncated output kept for the report.
 - Fixture YAML is loaded with `yaml.SafeLoader` and at most 256 aliases.
   Nesting that overflows Python recursion is a schema error. This is not a
   sandbox for untrusted authors; it only bounds alias bombs and stack depth.
+  Fixture `args` cannot contain `"`, `%`, `!`, `&`, `|`, `<`, `>`, `^`, CR, or
+  LF because `cmd /c` re-parses them after CreateProcess quoting.
 - Helper `BATTEST_*` variables are not injected into the script environment.
   Inherited host `BATTEST_*` keys are stripped before the script runs so a
   runner or CI job cannot leak helper names into the case. Fixture `env` can

@@ -25,7 +25,7 @@ from battest.engine import (
     _run_process,
     _script_warnings,
     _seed_work_dir,
-    build_cmd_line,
+    _snapshot_env,
     build_wrapper_text,
     collapse_path_keys,
     execute_case,
@@ -51,9 +51,12 @@ from battest.process import (
     _assign_and_resume,
     _close_job,
     _create_kill_on_close_job,
+    _handle_as_int,
+    _join_readers,
     _read_capped_stream,
     _write_stdin,
     abandon_lingering_process,
+    build_cmd_line,
     close_process_streams,
     cmd_executable,
     coerce_process_result,
@@ -1112,7 +1115,7 @@ def test_mock_error_becomes_error_result(
         expect=Expect(exit_code=0),
     )
 
-    def boom(_root: Path, _mocks: dict[str, MockSpec]) -> Path:
+    def boom(_root: Path, _mocks: dict[str, MockSpec], **_kwargs: object) -> Path:
         raise MockError("battest_stub.exe is missing")
 
     monkeypatch.setattr("battest.engine.write_mock_tree", boom)
@@ -1237,6 +1240,7 @@ def test_run_process_success_and_timeout(
             return None
 
     monkeypatch.setattr("battest.process.subprocess.Popen", OkProcessFixed)
+    monkeypatch.setattr("battest.process._create_kill_on_close_job", lambda: None)
     result = _run_process(["cmd"], tmp_path, {}, "hi", 1.0, "utf-8")
     assert result.exit_code == 3
     assert result.stdout == "out"
@@ -1271,9 +1275,6 @@ def test_run_process_success_and_timeout(
     killed: list[int] = []
     monkeypatch.setattr("battest.process.subprocess.Popen", TimeoutProcess)
     monkeypatch.setattr("battest.process.kill_process_tree", killed.append)
-    monkeypatch.setattr(
-        "battest.process.drain_after_timeout", lambda _proc, _timeout: (b"", b"")
-    )
     result = _run_process(["cmd"], tmp_path, {}, "", 0.1, "utf-8")
     assert result.timed_out is True
     assert result.exit_code == -1
@@ -1646,10 +1647,13 @@ def test_deadline_starts_after_prepare(
     original_prepare = _prepare_work_dir
 
     def slow_prepare(
-        prepared_case: Case, config: EngineConfig, work_dir: Path
+        prepared_case: Case,
+        config: EngineConfig,
+        work_dir: Path,
+        **_kwargs: object,
     ) -> object:
         time.sleep(0.25)
-        return original_prepare(prepared_case, config, work_dir)
+        return original_prepare(prepared_case, config, work_dir, **_kwargs)
 
     seen: list[float] = []
 
@@ -1785,6 +1789,18 @@ def test_is_path_outside_directory(tmp_path: Path) -> None:
     assert is_path_outside_directory(str(inside / "child"), inside) is False
     assert is_path_outside_directory(str(tmp_path / "other"), inside) is True
     assert is_path_outside_directory("", inside) is False
+    child = inside / "child"
+    child.mkdir()
+    assert is_path_outside_directory("child", inside) is False
+    assert is_path_outside_directory("..", inside) is True
+
+
+def test_snapshot_env_warns_when_dump_missing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level("WARNING", logger="battest.engine"):
+        assert _snapshot_env(tmp_path, "utf-8") == {}
+    assert "env dump missing" in caplog.text
 
 
 def test_cwd_outside_workdir_appends_warning(
@@ -1955,6 +1971,7 @@ def test_run_process_caps_stream_bytes(
 
     monkeypatch.setattr("battest.process.subprocess.Popen", FloodProcess)
     monkeypatch.setattr("battest.process.subprocess.run", fake_taskkill)
+    monkeypatch.setattr("battest.process._create_kill_on_close_job", lambda: None)
     from battest.process import run_process as run_proc
 
     result = run_proc(["cmd"], tmp_path, {}, "", 1.0, "utf-8", max_bytes=10)
@@ -2090,7 +2107,8 @@ def test_read_capped_stream_overflow_and_oserror() -> None:
 def test_job_helpers_when_windll_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("battest.process.ctypes_windll", lambda: None)
     assert _create_kill_on_close_job() is None
-    _assign_and_resume(object(), 1)
+    with pytest.raises(OSError, match="Win32 APIs unavailable"):
+        _assign_and_resume(object(), 1)
     _close_job(1)
 
 
@@ -2136,13 +2154,119 @@ def test_job_create_and_assign_failure_paths(
         pid = 4
         _handle = 11
 
-    class Ntdll:
-        def NtResumeProcess(self, *_args: object) -> int:
-            return 1
-
-    monkeypatch.setattr("battest.process.ctypes.WinDLL", lambda _name: Ntdll())
     monkeypatch.setattr("battest.process.ctypes_windll", lambda: Windll())
+    monkeypatch.setattr("battest.process._nt_resume_process", lambda _handle: 1)
+    with pytest.raises(OSError, match="NtResumeProcess failed"):
+        _assign_and_resume(Process(), 7)
+
+    monkeypatch.setattr("battest.process._nt_resume_process", lambda _handle: 0)
     _assign_and_resume(Process(), 7)
+
+    class NoHandle:
+        pid = 8
+
+    with pytest.raises(OSError, match="no _handle"):
+        _assign_and_resume(NoHandle(), 7)
+
+    class ZeroHandle:
+        pid = 9
+        _handle = 0
+
+    with pytest.raises(OSError, match="null"):
+        _assign_and_resume(ZeroHandle(), 7)
+
+    assert _handle_as_int(None) == 0
+    assert _handle_as_int(False) == 0
+    assert _handle_as_int(object()) == 0
+
+
+def test_join_readers_logs_when_thread_stays_alive(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Stuck:
+        name = "battest-stdout"
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return True
+
+    with caplog.at_level("ERROR", logger="battest.process"):
+        _join_readers([Stuck()])  # type: ignore[list-item]
+    assert "did not exit after kill" in caplog.text
+
+
+def test_run_process_kills_before_joining_readers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class QuietStdin:
+        def write(self, data: bytes) -> int:
+            return len(data)
+
+        def flush(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class BlockUntilKilled:
+        def __init__(self, owner: object) -> None:
+            self._owner = owner
+
+        def read(self, _size: int = -1) -> bytes:
+            while getattr(self._owner, "returncode") is None:
+                time.sleep(0.01)
+            return b""
+
+        def close(self) -> None:
+            return None
+
+    class StickyProcess:
+        pid = 42
+        returncode: int | None = None
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.stdin = QuietStdin()
+            self.stdout = BlockUntilKilled(self)
+            self.stderr = BlockUntilKilled(self)
+
+        def communicate(
+            self, input: bytes | None = None, timeout: float | None = None
+        ) -> tuple[bytes, bytes]:
+            raise AssertionError("communicate must not run after custom readers")
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, timeout: float | None = None) -> int:
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    holder: list[StickyProcess] = []
+
+    def fake_popen(*_args: object, **_kwargs: object) -> StickyProcess:
+        process = StickyProcess()
+        holder.append(process)
+        return process
+
+    def fake_kill(_pid: int) -> None:
+        holder[0].returncode = -9
+
+    monkeypatch.setattr("battest.process.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("battest.process.kill_process_tree", fake_kill)
+    monkeypatch.setattr("battest.process._create_kill_on_close_job", lambda: None)
+    from battest.process import run_process as run_proc
+
+    started = time.perf_counter()
+    result = run_proc(["cmd"], tmp_path, {}, "", 0.05, "utf-8")
+    assert result.timed_out is True
+    assert time.perf_counter() - started < 2.0
+    assert holder[0].returncode == -9
 
 
 def test_run_process_keeps_truncated_extra_drain(
@@ -2185,7 +2309,7 @@ def test_run_process_keeps_truncated_extra_drain(
         def communicate(
             self, input: bytes | None = None, timeout: float | None = None
         ) -> tuple[bytes, bytes]:
-            return b"EXTRAOUT", b"EXTRAERR"
+            raise AssertionError("communicate must not run after custom readers")
 
         def poll(self) -> int | None:
             self._polls += 1

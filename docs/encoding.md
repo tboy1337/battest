@@ -5,6 +5,10 @@
 falls back to charset-normalizer when the bytes are not valid. If
 `GetConsoleOutputCP` is 0, battest uses OEM then ACP and logs the choice.
 
+PATH-mock stdout and stderr sidecars are written in that same console encoding
+so the stub's canned output matches capture. Unencodable mock text is a case
+error. `.exit` files and empty call logs stay UTF-8 (ASCII).
+
 Matchers use `newline: auto` by default, so `\r\n` and `\n` compare equal.
 Set `newline: crlf` to require CRLF in the captured text (lone LF fails) and
 to canonicalize expected YAML LF to CRLF. Set `newline: lf` to require LF-only

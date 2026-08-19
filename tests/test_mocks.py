@@ -89,6 +89,35 @@ def test_write_mock_tree_sidecars(tmp_path: Path) -> None:
     assert (mock_dir / "net.stderr").read_text(encoding="utf-8") == "err"
 
 
+def test_write_mock_tree_encodes_sidecars(tmp_path: Path) -> None:
+    mock_dir = write_mock_tree(
+        tmp_path,
+        {"net": MockSpec(exit_code=0, stdout="café", stderr="erré")},
+        encoding="latin-1",
+    )
+    assert (mock_dir / "net.stdout").read_bytes() == "café".encode("latin-1")
+    assert (mock_dir / "net.stderr").read_bytes() == "erré".encode("latin-1")
+    assert (mock_dir / "net.exit").read_text(encoding="utf-8") == "0"
+
+
+def test_write_mock_tree_rejects_unencodable_sidecar(tmp_path: Path) -> None:
+    with pytest.raises(MockError, match="cannot be encoded"):
+        write_mock_tree(
+            tmp_path,
+            {"net": MockSpec(exit_code=0, stdout="你好")},
+            encoding="ascii",
+        )
+
+
+def test_write_mock_tree_rejects_unknown_encoding(tmp_path: Path) -> None:
+    with pytest.raises(MockError, match="unknown mock sidecar encoding"):
+        write_mock_tree(
+            tmp_path,
+            {"net": MockSpec(exit_code=0, stdout="out")},
+            encoding="not-a-codec",
+        )
+
+
 def test_write_mock_tree_without_call_recording(tmp_path: Path) -> None:
     mock_dir = write_mock_tree(
         tmp_path,

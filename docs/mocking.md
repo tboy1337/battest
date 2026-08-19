@@ -25,7 +25,10 @@ device names (`nul`, `con`, `prn`, `com1`–`com9`, `lpt1`–`lpt9`) are schema
 errors so a fixture cannot write stub files outside the mock directory. Using `.exe` matters: a batch
 script that runs `ipconfig` without `CALL` never returns if the shadow is a
 `.cmd` file. Sidecar files (`ipconfig.stdout`, `ipconfig.stderr`,
-`ipconfig.exit`) supply canned output and the exit code. When call recording
+`ipconfig.exit`) supply canned output and the exit code. Stdout and stderr
+sidecars are encoded with the console code page used to decode capture; text
+that cannot encode is a run error. `.exit` and empty call logs stay UTF-8.
+When call recording
 is enabled (the default), battest pre-creates `_calls/ipconfig.log` and each
 invocation appends one JSON array of argv strings (so arguments that contain
 spaces stay distinct). `expect_calls.args_contains` is still a substring match,

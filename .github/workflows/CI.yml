@@ -405,7 +405,17 @@ jobs:
       - name: Install wheel and import battest
         run: |
           python -m pip install dist/*.whl
-          python -c "import battest"
+          python -c "
+          import importlib.metadata
+          from importlib.resources import files
+          import battest
+          from battest.mocks import stub_executable
+          assert battest.__version__
+          scripts = importlib.metadata.entry_points(group='console_scripts')
+          assert any(item.name == 'battest' for item in scripts)
+          assert files('battest').joinpath('data/battest_stub.exe').is_file()
+          assert stub_executable().is_file()
+          "
 
   dependency-graph:
     name: Dependency Graph
@@ -496,9 +506,9 @@ jobs:
 
           if [ "$TAG_EXISTS" = true ]; then
             echo "Version unchanged ($NEW_VERSION) and tag v${NEW_VERSION} exists."
-            echo "Skipping GitHub assets; still publishing PyPI with skip-existing."
+            echo "Skipping GitHub assets and PyPI; use workflow_dispatch to retry publish."
             echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "should_publish_pypi=true" >> "$GITHUB_OUTPUT"
+            echo "should_publish_pypi=false" >> "$GITHUB_OUTPUT"
           else
             echo "Version unchanged ($NEW_VERSION) but tag v${NEW_VERSION} is missing; releasing."
             echo "should_release=true" >> "$GITHUB_OUTPUT"

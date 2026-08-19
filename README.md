@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: battest
-        uses: tboy1337/battest@v1.0.6
+        uses: tboy1337/battest@v1.0.7
         with:
           path: tests
           safe-defaults: "true"
@@ -149,6 +149,12 @@ results = run_cases(cases, jobs=1, safe_defaults=False)
 
 `run_case` / `run_cases` require Windows `cmd.exe`. `safe_defaults` defaults to
 off, matching the CLI. Full notes: [CLI](docs/cli.md).
+
+## Development
+
+Clone this repository and run `python scripts/verify.py` (format, types, lint,
+pytest, and the PATH-mock stub checks). Stub build details:
+[PATH mock stub crate](docs/stub.md).
 
 ## Documentation
 

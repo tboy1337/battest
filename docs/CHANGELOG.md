@@ -5,6 +5,26 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-08-19
+
+Production audit: timeout kill order, resume fail-loud, arg expansion, and
+release gating.
+
+- Timeout and output overflow close the Job Object first (`KILL_ON_JOB_CLOSE`),
+  then `taskkill` if needed, then join capture threads. Custom pipe readers
+  are not mixed with `communicate()`. A failed `NtResumeProcess` or missing
+  process handle is a case `ERROR`; a suspended `cmd.exe` is not left until
+  timeout. Job Object WinAPI calls use explicit HANDLE/BOOL ctypes prototypes.
+- Fixture `args` also reject `%` and `!` so `cmd /c` cannot expand host or
+  delayed-expansion variables. Mock stdout/stderr sidecars are written in the
+  console code page; unencodable mock text is a `MockError`.
+- Relative `%CD%` dumps are resolved against the case workdir. Missing env
+  dumps log a warning. `battest` console-script entry calls
+  `multiprocessing.freeze_support()` for regex workers.
+- Push CI publishes GitHub and PyPI only on a version bump or a missing tag.
+  `workflow_dispatch` without `force` still retries PyPI with skip-existing.
+  Package smoke asserts the console script and packaged `battest_stub.exe`.
+
 ## [1.0.6] - 2026-08-19
 
 Production audit: Job Object isolation, output caps, Trusted Publishing, and
@@ -166,6 +186,7 @@ Rust stub helper.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
+[1.0.7]: https://github.com/tboy1337/battest/releases/tag/v1.0.7
 [1.0.6]: https://github.com/tboy1337/battest/releases/tag/v1.0.6
 [1.0.5]: https://github.com/tboy1337/battest/releases/tag/v1.0.5
 [1.0.4]: https://github.com/tboy1337/battest/releases/tag/v1.0.4

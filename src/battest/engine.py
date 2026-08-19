@@ -33,7 +33,7 @@ from battest.mocks import (
 from battest.models import Case, EngineConfig, Outcome, RunResult
 from battest.process import (
     ProcessResult,
-    build_cmd_line as build_cmd_line,
+    build_cmd_line,
     coerce_process_result,
     is_path_outside_directory,
     run_process,
@@ -196,6 +196,9 @@ def teardown_timeout(deadline: float) -> float:
 def _snapshot_env(work_dir: Path, encoding: str) -> dict[str, str]:
     env_dump = work_dir / ENV_DUMP_NAME
     if not env_dump.is_file():
+        LOGGER.warning(
+            "env dump missing at %s; treating captured env as empty", env_dump
+        )
         return {}
     return filter_helper_vars(
         parse_set_output(env_dump.read_text(encoding=encoding, errors="replace"))
@@ -420,7 +423,13 @@ def _error_result(
     )
 
 
-def _prepare_work_dir(case: Case, config: EngineConfig, work_dir: Path) -> PreparedWork:
+def _prepare_work_dir(
+    case: Case,
+    config: EngineConfig,
+    work_dir: Path,
+    *,
+    encoding: str = "utf-8",
+) -> PreparedWork:
     base_dir = case.source_path.parent
     to_copy = list(case.copy_paths)
     to_copy.append(case.script_path)
@@ -430,7 +439,7 @@ def _prepare_work_dir(case: Case, config: EngineConfig, work_dir: Path) -> Prepa
         to_copy.append(case.teardown_path)
     _seed_work_dir(work_dir, to_copy, base_dir)
     mocks = effective_mocks(case.mocks, case.allow, config.safe_defaults)
-    mock_dir = write_mock_tree(work_dir, mocks) if mocks else None
+    mock_dir = write_mock_tree(work_dir, mocks, encoding=encoding) if mocks else None
     sut_path = _relocated_path(work_dir, case.script_path, base_dir)
     wrapper = work_dir / WRAPPER_NAME
     wrapper.write_text(
@@ -581,7 +590,7 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
     work_dir = Path(tempfile.mkdtemp(prefix="battest-"))
     try:
         try:
-            prepared = _prepare_work_dir(case, config, work_dir)
+            prepared = _prepare_work_dir(case, config, work_dir, encoding=encoding)
         except (OSError, ValueError, MockError) as exc:
             LOGGER.error("case %s failed before execution: %s", case.case_id, exc)
             return _error_result(case, started, warnings, str(exc))

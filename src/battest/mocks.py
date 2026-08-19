@@ -107,13 +107,42 @@ def _confined_mock_path(mock_dir: Path, command: str, filename: str) -> Path:
     return path
 
 
-def write_mock_tree(root: Path, mocks: dict[str, MockSpec]) -> Path:
+def _write_sidecar_text(path: Path, text: str, encoding: str) -> None:
+    """Write mock stdout/stderr bytes in the case console encoding."""
+    try:
+        path.write_bytes(text.encode(encoding))
+    except LookupError as exc:
+        LOGGER.error("unknown mock sidecar encoding %s path=%s", encoding, path)
+        raise MockError(f"unknown mock sidecar encoding {encoding!r}") from exc
+    except UnicodeEncodeError as exc:
+        LOGGER.error(
+            "mock sidecar %s cannot be encoded as %s",
+            path.name,
+            encoding,
+        )
+        raise MockError(
+            f"mock sidecar {path.name} cannot be encoded as {encoding}"
+        ) from exc
+
+
+def write_mock_tree(
+    root: Path,
+    mocks: dict[str, MockSpec],
+    *,
+    encoding: str = "utf-8",
+) -> Path:
     """Copy exe stubs and sidecar files into root; return the mock directory."""
     mock_dir = root / MOCK_DIR_NAME
     call_dir = mock_dir / CALL_LOG_DIR
     call_dir.mkdir(parents=True, exist_ok=True)
     catalog = load_catalog()
     source_exe = stub_executable()
+    LOGGER.debug(
+        "writing mock tree root=%s commands=%s encoding=%s",
+        root,
+        sorted(mocks.keys()),
+        encoding,
+    )
     for name, spec in mocks.items():
         try:
             lowered = normalize_command_name(name)
@@ -134,19 +163,24 @@ def write_mock_tree(root: Path, mocks: dict[str, MockSpec]) -> Path:
                 "", encoding="utf-8"
             )
         if spec.stdout:
-            _confined_mock_path(mock_dir, lowered, f"{lowered}.stdout").write_text(
-                spec.stdout, encoding="utf-8"
+            _write_sidecar_text(
+                _confined_mock_path(mock_dir, lowered, f"{lowered}.stdout"),
+                spec.stdout,
+                encoding,
             )
         if spec.stderr:
-            _confined_mock_path(mock_dir, lowered, f"{lowered}.stderr").write_text(
-                spec.stderr, encoding="utf-8"
+            _write_sidecar_text(
+                _confined_mock_path(mock_dir, lowered, f"{lowered}.stderr"),
+                spec.stderr,
+                encoding,
             )
         LOGGER.debug(
-            "wrote mock stub %s exit=%s stdout_len=%s stderr_len=%s",
+            "wrote mock stub %s exit=%s stdout_len=%s stderr_len=%s encoding=%s",
             stub_path,
             spec.exit_code,
             len(spec.stdout),
             len(spec.stderr),
+            encoding,
         )
     return mock_dir
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -22,6 +23,7 @@ CREATE_SUSPENDED = 0x00000004
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _STREAM_CHUNK_SIZE = 65_536
+_NTSTATUS_SUCCESS = 0
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,48 @@ class TerminableProcess(Protocol):
 
     def wait(self, timeout: float | None = None) -> int:
         """Wait for the process to exit, optionally bounded by timeout."""
+
+
+class JobObjectBasicLimitInformation(ctypes.Structure):
+    """JOBOBJECT_BASIC_LIMIT_INFORMATION for SetInformationJobObject."""
+
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", ctypes.c_uint32),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.c_uint32),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", ctypes.c_uint32),
+        ("SchedulingClass", ctypes.c_uint32),
+    ]
+
+
+class IoCounters(ctypes.Structure):
+    """IO_COUNTERS nested inside JOBOBJECT_EXTENDED_LIMIT_INFORMATION."""
+
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+
+class JobObjectExtendedLimitInformation(ctypes.Structure):
+    """JOBOBJECT_EXTENDED_LIMIT_INFORMATION including kill-on-close flags."""
+
+    _fields_ = [
+        ("BasicLimitInformation", JobObjectBasicLimitInformation),
+        ("IoInfo", IoCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
 
 
 def system32_executable(name: str) -> str:
@@ -184,61 +228,88 @@ def ctypes_windll() -> object | None:
     return getattr(ctypes, "windll", None)
 
 
+def _try_set_winapi(
+    func: object, *, restype: object, argtypes: tuple[object, ...]
+) -> None:
+    """Set ctypes restype/argtypes when the object supports it."""
+    try:
+        setattr(func, "restype", restype)
+        setattr(func, "argtypes", list(argtypes))
+    except (AttributeError, TypeError):
+        LOGGER.debug("cannot set ctypes prototypes on %r", func)
+
+
+def _configure_kernel32(kernel32: object) -> None:
+    """Type Job Object APIs so 64-bit HANDLEs are not truncated to c_int."""
+    _try_set_winapi(
+        kernel32.CreateJobObjectW,  # type: ignore[union-attr]
+        restype=wintypes.HANDLE,
+        argtypes=(wintypes.LPVOID, wintypes.LPCWSTR),
+    )
+    _try_set_winapi(
+        kernel32.SetInformationJobObject,  # type: ignore[union-attr]
+        restype=wintypes.BOOL,
+        argtypes=(
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ),
+    )
+    _try_set_winapi(
+        kernel32.AssignProcessToJobObject,  # type: ignore[union-attr]
+        restype=wintypes.BOOL,
+        argtypes=(wintypes.HANDLE, wintypes.HANDLE),
+    )
+    _try_set_winapi(
+        kernel32.CloseHandle,  # type: ignore[union-attr]
+        restype=wintypes.BOOL,
+        argtypes=(wintypes.HANDLE,),
+    )
+
+
+def _kernel32() -> object | None:
+    windll = ctypes_windll()
+    if windll is None:
+        return None
+    kernel32: object = windll.kernel32  # type: ignore[union-attr]
+    _configure_kernel32(kernel32)
+    return kernel32
+
+
+def _handle_as_int(raw: object) -> int:
+    """Coerce a ctypes HANDLE, integer, or None to a comparable int."""
+    if raw is None or raw is False:
+        return 0
+    if isinstance(raw, int):
+        return int(raw)
+    converter = getattr(raw, "__int__", None)
+    if callable(converter):
+        try:
+            converted = converter()
+        except (TypeError, ValueError, OverflowError):
+            LOGGER.error("unusable Win32 handle %r", raw)
+            return 0
+        if isinstance(converted, int):
+            return converted
+    LOGGER.error("unusable Win32 handle %r", raw)
+    return 0
+
+
 def _create_kill_on_close_job() -> int | None:
     """Create a Windows job that kills members when the handle is closed."""
     if sys.platform != "win32":
         return None
-    windll = ctypes_windll()
-    if windll is None:
+    kernel32 = _kernel32()
+    if kernel32 is None:
         return None
-    kernel32 = windll.kernel32  # type: ignore[union-attr]
-    handle = int(kernel32.CreateJobObjectW(None, None))
+    handle = _handle_as_int(kernel32.CreateJobObjectW(None, None))  # type: ignore[union-attr]
     if handle == 0:
         LOGGER.warning("CreateJobObjectW failed; falling back to taskkill")
         return None
-
-    class JobObjectBasicLimitInformation(ctypes.Structure):
-        """JOBOBJECT_BASIC_LIMIT_INFORMATION for SetInformationJobObject."""
-
-        _fields_ = [
-            ("PerProcessUserTimeLimit", ctypes.c_int64),
-            ("PerJobUserTimeLimit", ctypes.c_int64),
-            ("LimitFlags", ctypes.c_uint32),
-            ("MinimumWorkingSetSize", ctypes.c_size_t),
-            ("MaximumWorkingSetSize", ctypes.c_size_t),
-            ("ActiveProcessLimit", ctypes.c_uint32),
-            ("Affinity", ctypes.c_size_t),
-            ("PriorityClass", ctypes.c_uint32),
-            ("SchedulingClass", ctypes.c_uint32),
-        ]
-
-    class IoCounters(ctypes.Structure):
-        """IO_COUNTERS nested inside JOBOBJECT_EXTENDED_LIMIT_INFORMATION."""
-
-        _fields_ = [
-            ("ReadOperationCount", ctypes.c_uint64),
-            ("WriteOperationCount", ctypes.c_uint64),
-            ("OtherOperationCount", ctypes.c_uint64),
-            ("ReadTransferCount", ctypes.c_uint64),
-            ("WriteTransferCount", ctypes.c_uint64),
-            ("OtherTransferCount", ctypes.c_uint64),
-        ]
-
-    class JobObjectExtendedLimitInformation(ctypes.Structure):
-        """JOBOBJECT_EXTENDED_LIMIT_INFORMATION including kill-on-close flags."""
-
-        _fields_ = [
-            ("BasicLimitInformation", JobObjectBasicLimitInformation),
-            ("IoInfo", IoCounters),
-            ("ProcessMemoryLimit", ctypes.c_size_t),
-            ("JobMemoryLimit", ctypes.c_size_t),
-            ("PeakProcessMemoryUsed", ctypes.c_size_t),
-            ("PeakJobMemoryUsed", ctypes.c_size_t),
-        ]
-
     info = JobObjectExtendedLimitInformation()
     info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    ok = kernel32.SetInformationJobObject(
+    ok = kernel32.SetInformationJobObject(  # type: ignore[union-attr]
         handle,
         JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
         ctypes.byref(info),
@@ -246,43 +317,78 @@ def _create_kill_on_close_job() -> int | None:
     )
     if not ok:
         LOGGER.warning("SetInformationJobObject failed; closing unused job")
-        kernel32.CloseHandle(handle)
+        kernel32.CloseHandle(handle)  # type: ignore[union-attr]
         return None
     LOGGER.debug("created kill-on-close job handle=%s", handle)
     return handle
 
 
+def _nt_resume_process(process_handle: int) -> int:
+    """Resume every thread in a CREATE_SUSPENDED process via ntdll."""
+    ntdll = ctypes.WinDLL("ntdll")
+    _try_set_winapi(
+        ntdll.NtResumeProcess,
+        restype=ctypes.c_long,
+        argtypes=(wintypes.HANDLE,),
+    )
+    return int(ntdll.NtResumeProcess(process_handle))
+
+
 def _assign_and_resume(process: subprocess.Popen[bytes], job_handle: int) -> None:
-    windll = ctypes_windll()
-    if windll is None:
-        return
-    kernel32 = windll.kernel32  # type: ignore[union-attr]
+    """Assign a suspended process to the job, then resume it.
+
+    Popen closes the primary thread handle after CreateProcess, so
+    ResumeThread is unavailable. NtResumeProcess is required. A missing
+    handle or a failed resume leaves the child suspended, so this raises
+    OSError and the caller must kill the tree.
+    """
+    kernel32 = _kernel32()
+    if kernel32 is None:
+        LOGGER.error("Win32 APIs unavailable; cannot resume suspended cmd.exe")
+        raise OSError("Win32 APIs unavailable; cannot resume suspended cmd.exe")
     raw_handle = getattr(process, "_handle", None)
     if raw_handle is None:
-        LOGGER.warning("process has no _handle; cannot assign to job")
-        return
-    process_handle = int(raw_handle)
-    if not kernel32.AssignProcessToJobObject(job_handle, process_handle):
+        LOGGER.error("process has no _handle; cannot resume pid=%s", process.pid)
+        raise OSError("process has no _handle; cannot resume suspended cmd.exe")
+    process_handle = _handle_as_int(raw_handle)
+    if process_handle == 0:
+        LOGGER.error("process _handle is null; cannot resume pid=%s", process.pid)
+        raise OSError("process _handle is null; cannot resume suspended cmd.exe")
+    if not kernel32.AssignProcessToJobObject(job_handle, process_handle):  # type: ignore[union-attr]
         LOGGER.warning(
             "AssignProcessToJobObject failed pid=%s; falling back to taskkill",
             process.pid,
         )
-    ntdll = ctypes.WinDLL("ntdll")
-    status = int(ntdll.NtResumeProcess(process_handle))
-    if status != 0:
+    status = _nt_resume_process(process_handle)
+    if status != _NTSTATUS_SUCCESS:
         LOGGER.error("NtResumeProcess failed pid=%s status=%s", process.pid, status)
+        raise OSError(
+            f"NtResumeProcess failed pid={process.pid} status={status}; "
+            "refusing to leave a suspended cmd.exe"
+        )
+    LOGGER.debug("assigned and resumed pid=%s job=%s", process.pid, job_handle)
 
 
 def _close_job(job_handle: int | None) -> None:
     if job_handle is None or sys.platform != "win32":
         return
-    windll = ctypes_windll()
-    if windll is None:
+    kernel32 = _kernel32()
+    if kernel32 is None:
         return
-    if not windll.kernel32.CloseHandle(job_handle):
+    if not kernel32.CloseHandle(job_handle):  # type: ignore[union-attr]
         LOGGER.error("CloseHandle failed for job handle=%s", job_handle)
     else:
         LOGGER.debug("closed job handle=%s (kill-on-close)", job_handle)
+
+
+def _stop_job_and_tree(
+    process: subprocess.Popen[bytes], job_handle: int | None
+) -> None:
+    """Close the job first (KILL_ON_JOB_CLOSE), then taskkill if needed."""
+    LOGGER.warning("stopping captured process pid=%s job=%s", process.pid, job_handle)
+    _close_job(job_handle)
+    if process.poll() is None and process.pid is not None:
+        kill_process_tree(process.pid)
 
 
 def _read_capped_stream(
@@ -330,12 +436,20 @@ def _write_stdin(stream: BinaryIO | None, payload: bytes | None) -> None:
             LOGGER.debug("failed to close stdin", exc_info=True)
 
 
+def _join_readers(readers: list[threading.Thread]) -> None:
+    for thread in readers:
+        thread.join(timeout=KILL_DRAIN_TIMEOUT_SECONDS)
+        if thread.is_alive():
+            LOGGER.error("stream reader %s did not exit after kill", thread.name)
+
+
 def _wait_capped(
     process: subprocess.Popen[bytes],
     stdin_bytes: bytes | None,
     timeout_seconds: float,
     max_bytes: int,
-) -> tuple[bytes, bytes, bool, bool]:
+    job_handle: int | None,
+) -> tuple[bytes, bytes, bool, bool, int | None]:
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
     stdout_overflow = [False]
@@ -365,6 +479,7 @@ def _wait_capped(
     deadline = time.perf_counter() + timeout_seconds
     timed_out = False
     overflowed = False
+    remaining_job = job_handle
     while process.poll() is None:
         if stdout_overflow[0] or stderr_overflow[0]:
             overflowed = True
@@ -381,14 +496,16 @@ def _wait_capped(
         time.sleep(0.01)
     if stdout_overflow[0] or stderr_overflow[0]:
         overflowed = True
-    join_timeout = KILL_DRAIN_TIMEOUT_SECONDS
-    for thread in readers:
-        thread.join(timeout=join_timeout)
+    if timed_out or overflowed:
+        _stop_job_and_tree(process, remaining_job)
+        remaining_job = None
+    _join_readers(readers)
     return (
         b"".join(stdout_chunks),
         b"".join(stderr_chunks),
         timed_out,
         overflowed,
+        remaining_job,
     )
 
 
@@ -436,22 +553,14 @@ def run_process(
     try:
         if job_handle is not None:
             _assign_and_resume(process, job_handle)
-        stdout_bytes, stderr_bytes, timed_out, overflowed = _wait_capped(
+        stdout_bytes, stderr_bytes, timed_out, overflowed, job_handle = _wait_capped(
             process,
             stdin_bytes,
             timeout_seconds,
             limit,
+            job_handle,
         )
         if timed_out or overflowed:
-            if process.pid is not None:
-                kill_process_tree(process.pid)
-            extra_out, extra_err = drain_after_timeout(
-                process, KILL_DRAIN_TIMEOUT_SECONDS
-            )
-            if extra_out:
-                stdout_bytes = (stdout_bytes + extra_out)[:limit]
-            if extra_err:
-                stderr_bytes = (stderr_bytes + extra_err)[:limit]
             abandoned = abandon_lingering_process(process)
         exit_code = process.returncode if process.returncode is not None else -1
     finally:
@@ -484,12 +593,17 @@ def run_process(
 
 
 def is_path_outside_directory(candidate: str, root: Path) -> bool:
-    """Return True when candidate is an absolute path outside root."""
+    """Return True when candidate resolves outside root.
+
+    Absolute paths are resolved as given. Relative dumps are resolved against
+    ``root`` (the case workdir), not the runner's current directory.
+    """
     stripped = candidate.strip().strip('"')
     if not stripped:
         return False
     try:
-        resolved = Path(stripped).resolve()
+        raw = Path(stripped)
+        resolved = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
         resolved.relative_to(root.resolve())
     except (OSError, ValueError):
         return True
