@@ -20,7 +20,7 @@ PATH-mock stubs only intercept the named external executables they replace.
 They do not virtualize the filesystem, registry, or network.
 
 PyPI uploads run from GitHub Actions environment `pypi` with
-`twine upload --skip-existing` and the project-scoped `PYPI_BATTEST` secret.
+`twine upload` and the project-scoped `PYPI_BATTEST` secret.
 The job keeps `id-token: write` so a GitHub Trusted Publisher
 (`tboy1337/battest`, workflow `CI.yml`, environment `pypi`) can replace the
 token later without a permission change.

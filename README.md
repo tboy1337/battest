@@ -99,7 +99,7 @@ pip install battest
 ```
 
 Wheels on PyPI are published from the GitHub `pypi` environment with
-`twine upload --skip-existing` and the project-scoped `PYPI_BATTEST` secret.
+`twine upload` and the project-scoped `PYPI_BATTEST` secret.
 See [Security](docs/SECURITY.md).
 
 ### Standalone executable (no Python)

@@ -48,7 +48,6 @@ release gating.
   dumps log a warning. `battest` console-script entry calls
   `multiprocessing.freeze_support()` for regex workers.
 - Push CI publishes GitHub and PyPI only on a version bump or a missing tag.
-  `workflow_dispatch` without `force` still retries PyPI with skip-existing.
   Package smoke asserts the console script and packaged `battest_stub.exe`.
 
 ## [1.0.6] - 2026-08-19
@@ -72,9 +71,8 @@ installer/Action hardening.
   before `path`.
 - CI release concurrency is `battest-release` (`cancel-in-progress: false`).
   `workflow_dispatch` has `force` (default false) and does not rewrite an
-  existing GitHub tag unless forced. When the version tag already exists, CI
-  still publishes wheels to PyPI with skip-existing. PyPI upload uses twine
-  from environment `pypi` with the `PYPI_BATTEST` token.
+  existing GitHub tag unless forced. PyPI upload uses twine from environment
+  `pypi` with the `PYPI_BATTEST` token.
   `build-windows` smokes `battest.exe` before zipping; package-smoke imports
   the wheel.
 
@@ -163,7 +161,7 @@ Production audit: confinement, mock fail-closed, installer, and release gating.
   `pyproject.toml` via UTF-8 `git show` (bytes cannot be passed to
   `tomllib.loads`). It dogfoods examples against the committed stub before
   rebuilding it, creates the GitHub Release only after wheels exist, then
-  publishes to PyPI with `twine --skip-existing`.
+  publishes to PyPI with `twine`.
 - JSON Schema rejects reserved device stems, caps `regex` length, and rejects
   rooted file matcher paths. Editors still require lowercase command names.
 - CI and Action docs continue to pin GitHub Actions to version tags, not commit

@@ -678,7 +678,8 @@ def test_ci_retries_release_when_version_tag_is_missing() -> None:
     assert "should_publish_pypi=true" in script
     assert "should_publish_pypi=false" in script
     assert "Skipping GitHub assets and PyPI" in script
-    assert "use workflow_dispatch to retry publish" in script
+    assert "Skipping GitHub release rewrite and PyPI." in script
+    assert "skip-existing" not in script
     assert "github.event.inputs.force" in script
     assert "python scripts/read_git_pyproject_version.py HEAD^" in script
     assert "subprocess.check_output(['git', 'show', 'HEAD^:pyproject.toml'])" not in (
@@ -742,9 +743,9 @@ def test_ci_release_jobs_are_atomic() -> None:
         "create-release",
     ]
     publish_if = str(publish_pypi.get("if"))
-    assert "needs.build-wheels.result == 'success'" in publish_if
-    assert "should_publish_pypi" in publish_if
-    assert "should_release == 'false'" in publish_if
+    assert "needs.create-release.result == 'success'" in publish_if
+    assert "should_release == 'false'" not in publish_if
+    assert "skip-existing" not in publish_if
     assert publish_pypi.get("environment") == "pypi"
     permissions = publish_pypi.get("permissions")
     assert isinstance(permissions, dict)
@@ -790,12 +791,14 @@ def test_ci_release_jobs_are_atomic() -> None:
     publish_run = str(publish.get("run"))
     publish_env = publish.get("env")
     assert isinstance(publish_env, dict)
-    assert "twine upload --skip-existing" in publish_run
+    assert "twine upload dist/*" in publish_run
+    assert "--skip-existing" not in publish_run
     assert "secrets.PYPI_BATTEST" in str(publish_env.get("TWINE_PASSWORD"))
     workflow_text = (_repo_root() / ".github" / "workflows" / "CI.yml").read_text(
         encoding="utf-8"
     )
     assert "pypa/gh-action-pypi-publish" not in workflow_text
+    assert "skip-existing" not in workflow_text
     assert "workflow_dispatch:" in workflow_text
     assert "force:" in workflow_text
     assert "default: false" in workflow_text
