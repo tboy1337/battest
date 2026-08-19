@@ -98,9 +98,10 @@ Inputs, outputs, and `--` before `path` are documented in
 pip install battest
 ```
 
-Wheels on PyPI are published with Trusted Publishing (OIDC) from the GitHub
-`pypi` environment. The workflow does not use a long-lived PyPI API token.
-See [Security](docs/SECURITY.md).
+Wheels on PyPI are published from the GitHub `pypi` environment with
+`pypa/gh-action-pypi-publish@release/v1` and the project-scoped
+`PYPI_BATTEST` secret until a matching Trusted Publisher is registered on
+PyPI. See [Security](docs/SECURITY.md).
 
 ### Standalone executable (no Python)
 

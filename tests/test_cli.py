@@ -757,10 +757,10 @@ def test_ci_release_jobs_are_atomic() -> None:
         "pypa/gh-action-pypi-publish@release/"
     )
     assert publish.get("with", {}).get("skip-existing") is True
+    assert "secrets.PYPI_BATTEST" in str(publish.get("with", {}).get("password"))
     workflow_text = (_repo_root() / ".github" / "workflows" / "CI.yml").read_text(
         encoding="utf-8"
     )
-    assert "PYPI_BATTEST" not in workflow_text
     assert "TWINE_PASSWORD" not in workflow_text
     assert "workflow_dispatch:" in workflow_text
     assert "force:" in workflow_text
@@ -778,9 +778,9 @@ def test_ci_release_jobs_are_atomic() -> None:
     ]
     assert "Smoke test executable" in windows_names
     assert "Install battest for parity checks" in windows_names
-    assert windows_names.index("Install battest for parity checks") < windows_names.index(
-        "Smoke test executable"
-    )
+    assert windows_names.index(
+        "Install battest for parity checks"
+    ) < windows_names.index("Smoke test executable")
     assert windows_names.index("Smoke test executable") < windows_names.index(
         "Package executable for release"
     )

@@ -73,8 +73,9 @@ installer/Action hardening.
 - CI release concurrency is `battest-release` (`cancel-in-progress: false`).
   `workflow_dispatch` has `force` (default false) and does not rewrite an
   existing GitHub tag unless forced. When the version tag already exists, CI
-  still publishes wheels to PyPI with skip-existing. PyPI uses Trusted
-  Publishing (`pypa/gh-action-pypi-publish@release/v1`, environment `pypi`).
+  still publishes wheels to PyPI with skip-existing. PyPI upload uses
+  `pypa/gh-action-pypi-publish@release/v1` from environment `pypi` with the
+  `PYPI_BATTEST` token until a Trusted Publisher is registered.
   `build-windows` smokes `battest.exe` before zipping; package-smoke imports
   the wheel.
 

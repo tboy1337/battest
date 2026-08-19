@@ -19,6 +19,9 @@ Please include:
 PATH-mock stubs only intercept the named external executables they replace.
 They do not virtualize the filesystem, registry, or network.
 
-PyPI uploads use Trusted Publishing (OIDC) from GitHub Actions environment
-`pypi` and `pypa/gh-action-pypi-publish@release/v1`. Do not store a PyPI API
-token in repository secrets after that publisher is configured.
+PyPI uploads run from GitHub Actions environment `pypi` with
+`pypa/gh-action-pypi-publish@release/v1`. The job still has `id-token: write`
+for Trusted Publishing, but PyPI currently has no matching GitHub publisher
+(`tboy1337/battest`, workflow `CI.yml`, environment `pypi`), so uploads use
+the project-scoped `PYPI_BATTEST` secret. After that publisher is added on
+PyPI, remove the `password` input and delete the secret.

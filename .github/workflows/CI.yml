@@ -722,3 +722,8 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+          # Trusted Publishing is not registered on this project yet, so OIDC
+          # fails with invalid-publisher. The existing project-scoped token
+          # remains the upload credential until a GitHub publisher is added
+          # on PyPI (owner tboy1337, repo battest, workflow CI.yml, env pypi).
+          password: ${{ secrets.PYPI_BATTEST }}
