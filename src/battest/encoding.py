@@ -24,29 +24,29 @@ def _named_code_page(code_page: int) -> str | None:
 def console_encoding() -> str:
     """Return the console output code page encoding name."""
     if sys.platform != "win32":
-        LOGGER.info("console encoding utf-8 (non-Windows)")
+        LOGGER.debug("console encoding utf-8 (non-Windows)")
         return "utf-8"
     windll = getattr(ctypes, "windll", None)
     if windll is None:
-        LOGGER.info("console encoding utf-8 (no windll)")
+        LOGGER.debug("console encoding utf-8 (no windll)")
         return "utf-8"
     kernel = windll.kernel32
     output_cp = int(kernel.GetConsoleOutputCP())
     chosen = _named_code_page(output_cp)
     if chosen is not None:
-        LOGGER.info("console encoding %s (GetConsoleOutputCP=%s)", chosen, output_cp)
+        LOGGER.debug("console encoding %s (GetConsoleOutputCP=%s)", chosen, output_cp)
         return chosen
     oem = int(kernel.GetOEMCP())
     chosen = _named_code_page(oem)
     if chosen is not None:
-        LOGGER.info("GetConsoleOutputCP is 0; using OEM CP %s (%s)", oem, chosen)
+        LOGGER.debug("GetConsoleOutputCP is 0; using OEM CP %s (%s)", oem, chosen)
         return chosen
     acp = int(kernel.GetACP())
     chosen = _named_code_page(acp)
     if chosen is not None:
-        LOGGER.info("GetConsoleOutputCP is 0; using ACP %s (%s)", acp, chosen)
+        LOGGER.debug("GetConsoleOutputCP is 0; using ACP %s (%s)", acp, chosen)
         return chosen
-    LOGGER.info("GetConsoleOutputCP is 0; OEM and ACP unavailable, using utf-8")
+    LOGGER.debug("GetConsoleOutputCP is 0; OEM and ACP unavailable, using utf-8")
     return "utf-8"
 
 

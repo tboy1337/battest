@@ -15,5 +15,20 @@ if (-not $asset) { Write-Output 'NOT_FOUND'; exit 0 }
 $digest = $null
 if ($asset.PSObject.Properties['digest'] -and $asset.digest) { $digest = [string]$asset.digest }
 if (-not $digest) { Write-Output 'NO_DIGEST'; exit 0 }
-$line = $asset.browser_download_url + ' ' + $release.tag_name + ' ' + $digest
+$url = [string]$asset.browser_download_url
+try {
+    $parsed = [Uri]$url
+}
+catch {
+    Write-Output 'BAD_URL'; exit 0
+}
+$allowedHosts = @(
+    'github.com'
+    'objects.githubusercontent.com'
+    'release-assets.githubusercontent.com'
+)
+if ($parsed.Scheme -ne 'https' -or $allowedHosts -notcontains $parsed.Host) {
+    Write-Output 'BAD_URL'; exit 0
+}
+$line = $url + ' ' + $release.tag_name + ' ' + $digest
 Write-Output $line

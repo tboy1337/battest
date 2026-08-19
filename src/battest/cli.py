@@ -16,7 +16,7 @@ from battest.constants import DEFAULT_MAX_DIFF, DEFAULT_TIMEOUT_SECONDS, MAX_JOB
 from battest.discover import default_root, discover_cases
 from battest.engine import EngineError, execute_cases, require_windows
 from battest.logging_config import configure_logging, get_logger
-from battest.models import EngineConfig
+from battest.models import EngineConfig, RunResult
 from battest.report import (
     exit_status,
     render_console,
@@ -97,6 +97,35 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_run_args(args: argparse.Namespace) -> str | None:
+    """Return a usage error message, or None when run arguments are valid."""
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        return "--timeout must be a finite number greater than 0"
+    if args.jobs < 1:
+        return "--jobs must be at least 1"
+    if args.jobs > MAX_JOBS:
+        return f"--jobs must be at most {MAX_JOBS}"
+    if args.max_diff < 1:
+        return "--max-diff must be at least 1"
+    return None
+
+
+def _write_run_junit(args: argparse.Namespace, results: list[RunResult]) -> int | None:
+    """Write JUnit when requested. Return an override exit code, or None."""
+    if not args.junit_xml:
+        return None
+    try:
+        write_junit_xml(results, Path(args.junit_xml))
+    except OSError as exc:
+        LOGGER.error("failed to write junit xml: %s", exc)
+        print(f"failed to write junit xml: {exc}", file=sys.stderr)
+        ran_status = exit_status(results)
+        if ran_status == 1:
+            return 1
+        return 2
+    return None
+
+
 def _run_command(args: argparse.Namespace) -> int:
     level = logging.DEBUG if args.verbose else logging.INFO
     configure_logging(level)
@@ -112,14 +141,9 @@ def _run_command(args: argparse.Namespace) -> int:
         args.timeout,
         args.safe_defaults,
     )
-    if not math.isfinite(args.timeout) or args.timeout <= 0:
-        return _usage_failure(args, "--timeout must be a finite number greater than 0")
-    if args.jobs < 1:
-        return _usage_failure(args, "--jobs must be at least 1")
-    if args.jobs > MAX_JOBS:
-        return _usage_failure(args, f"--jobs must be at most {MAX_JOBS}")
-    if args.max_diff < 1:
-        return _usage_failure(args, "--max-diff must be at least 1")
+    invalid = _validate_run_args(args)
+    if invalid is not None:
+        return _usage_failure(args, invalid)
     try:
         cases = discover_cases(root, include_spec_exec=args.include_spec_exec)
     except SchemaError as exc:
@@ -140,16 +164,9 @@ def _run_command(args: argparse.Namespace) -> int:
     except EngineError as exc:
         return _usage_failure(args, str(exc))
     render_console(results, sys.stdout)
-    if args.junit_xml:
-        try:
-            write_junit_xml(results, Path(args.junit_xml))
-        except OSError as exc:
-            LOGGER.error("failed to write junit xml: %s", exc)
-            print(f"failed to write junit xml: {exc}", file=sys.stderr)
-            ran_status = exit_status(results)
-            if ran_status == 1:
-                return 1
-            return 2
+    junit_status = _write_run_junit(args, results)
+    if junit_status is not None:
+        return junit_status
     return exit_status(results)
 
 

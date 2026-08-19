@@ -5,6 +5,32 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-08-20
+
+Production audit: Job assign fail-loud, env-dump integrity, installer host
+allowlist, and packaging/CI hygiene.
+
+- `AssignProcessToJobObject` failure is a case `ERROR`. battest does not resume
+  `cmd.exe` outside the job. The job handle is closed if `Popen` fails. An
+  abandoned process skips `rmtree` of the workdir. JUnit duration includes
+  teardown.
+- After seeding, a non-file env dump path is `ERROR` before spawn. After a
+  finished run, missing or non-file dumps are `ERROR` when `expect.env` is set.
+  Env dumps, `equals_file`, and `files[]` reads are capped at 10 MiB.
+  `copy:` refuses junctions/symlinks whose target escapes the fixture tree.
+- Host environment is inherited except stripped `BATTEST_*`. CI secrets that
+  are not named `BATTEST_*` can reach the SUT and JUnit. `expect_calls` is not
+  a security boundary; call logs live in the writable workdir.
+- Installer download URLs must be `https` on GitHub asset hosts. Package smoke
+  asserts packaged catalogs and schema. Non-Windows unit coverage does not use
+  the 90% floor (Windows jobs still do). PSGallery installs pin exact
+  PSScriptAnalyzer and Pester versions.
+- Packaged catalog YAML uses the same bounded loader as fixtures. Regex
+  workers get `multiprocessing.freeze_support()` from `execute_case`. Invalid
+  regex patterns fail immediately without spawning a worker.
+- GitHub Action consumers should use `tboy1337/battest@v1`. Release CI moves
+  that major tag to each `v1.x.x` GitHub release.
+
 ## [1.0.7] - 2026-08-19
 
 Production audit: timeout kill order, resume fail-loud, arg expansion, and
@@ -186,6 +212,7 @@ Rust stub helper.
 - CI and `scripts/verify.py` lint first-party batch scripts with Blinter
   (`scripts/blinter.ini` for installers; default rules for `examples/`).
 
+[1.0.8]: https://github.com/tboy1337/battest/releases/tag/v1.0.8
 [1.0.7]: https://github.com/tboy1337/battest/releases/tag/v1.0.7
 [1.0.6]: https://github.com/tboy1337/battest/releases/tag/v1.0.6
 [1.0.5]: https://github.com/tboy1337/battest/releases/tag/v1.0.5

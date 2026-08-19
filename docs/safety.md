@@ -10,6 +10,8 @@ Mitigations that **are** included:
   rather than the fixture tree. Extra sibling files still need `copy:`.
   Isolation of relative internals such as `del` lasts only until the script
   `cd`s away; battest warns when the post-run `%CD%` is outside the workdir.
+  `copy:` will not follow a junction or symlink whose target escapes the
+  fixture directory; in-tree links are copied as links.
 - `cmd.exe /d` so AutoRun is disabled
 - Fixture `script`, `setup`, `teardown`, `copy`, and `equals_file` paths must
   stay under the fixture directory (absolute, drive-relative, and UNC paths
@@ -24,26 +26,37 @@ Mitigations that **are** included:
   budget. If the remaining budget is already gone, setup and the script are
   not spawned. After expiry, teardown still gets at least five seconds.
 - Windows Job Objects with `KILL_ON_JOB_CLOSE`. `cmd.exe` is started
-  suspended, assigned to the job, then resumed. Timeout and output overflow
-  close the job handle first so leftover children die, then `taskkill /F /T`
-  if anything is still alive. Capture threads join only after that kill. A
-  failed resume or missing process handle is a case `ERROR`; battest does not
-  leave a suspended `cmd.exe` until the timeout. The job handle is also closed
-  in `finally`. If a process is still alive after kill, the case is TIMEOUT or
-  ERROR and a warning names the pid.
+  suspended, assigned to the job, then resumed. A failed
+  `AssignProcessToJobObject` is a case `ERROR`: battest does not resume
+  `cmd.exe` outside the job. Timeout and output overflow close the job handle
+  first so leftover children die, then `taskkill /F /T` if anything is still
+  alive. Capture threads join only after that kill. A failed resume or missing
+  process handle is a case `ERROR`; battest does not leave a suspended
+  `cmd.exe` until the timeout. The job handle is also closed in `finally`,
+  including when `Popen` fails before a child exists. If a process is still
+  alive after kill, the case is TIMEOUT or ERROR, a warning names the pid, and
+  the workdir is left in place instead of `rmtree`.
 - Captured stdout and stderr are capped at 10 MiB each. Overflow kills the job
-  first and is a case `ERROR` with truncated output kept for the report.
+  first and is a case `ERROR` with truncated output kept for the report. Env
+  dumps, `equals_file`, and `files[]` content reads use the same cap.
 - Fixture YAML is loaded with `yaml.SafeLoader` and at most 256 aliases.
-  Nesting that overflows Python recursion is a schema error. This is not a
-  sandbox for untrusted authors; it only bounds alias bombs and stack depth.
+  Packaged command catalogs use the same bounded loader. Nesting that overflows
+  Python recursion is a schema error. This is not a sandbox for untrusted
+  authors; it only bounds alias bombs and stack depth.
   Fixture `args` cannot contain `"`, `%`, `!`, `&`, `|`, `<`, `>`, `^`, CR, or
   LF because `cmd /c` re-parses them after CreateProcess quoting.
 - Helper `BATTEST_*` variables are not injected into the script environment.
   Inherited host `BATTEST_*` keys are stripped before the script runs so a
-  runner or CI job cannot leak helper names into the case. Fixture `env` can
-  still set `BATTEST_*` values. The wrapper calls the copied script via `%~dp0`
-  and writes the env dump next to the wrapper, so a script cannot redirect that
-  dump by changing variables.
+  runner or CI job cannot leak helper names into the case. Other host
+  environment variables are inherited, including CI secrets that are not named
+  `BATTEST_*`; JUnit can record stdout, stderr, env dumps, and fixture values.
+  Fixture `env` can still set `BATTEST_*` values. The wrapper calls the copied
+  script via `%~dp0` and writes the env dump next to the wrapper, so a script
+  cannot redirect that dump by changing variables. If `expect.env` is set and
+  the dump is missing or not a regular file after a finished run, the case is
+  `ERROR` rather than treating every `unset:` name as absent.
+- PATH-mock `expect_calls` is an assertion helper, not a security boundary.
+  Call logs live in the writable case workdir; a script can rewrite them.
 - Warnings for destructive cmd internals (`copy`, `del`, `erase`, `move`,
   `rd`, `ren`, `rename`, `rmdir`) used with absolute paths, including
   `C:\...`, `C:/...`, quoted targets with spaces

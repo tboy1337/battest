@@ -32,6 +32,7 @@ lib64/
 # Test and quality tooling
 testResults.xml
 .pytest_cache/
+pytest-cache-files-*/
 .coverage
 .coverage.*
 htmlcov/

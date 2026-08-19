@@ -40,6 +40,11 @@ def search_with_timeout(
         len(text),
         timeout_seconds,
     )
+    try:
+        re.compile(pattern)
+    except re.error:
+        LOGGER.error("invalid regex pattern_len=%s", len(pattern), exc_info=True)
+        raise
     parent, child = Pipe(duplex=False)
     worker = Process(target=_search_worker, args=(pattern, text, child), daemon=True)
     worker.start()

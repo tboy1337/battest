@@ -130,6 +130,49 @@ def write_usage_junit(path: Path, message: str) -> None:
     )
 
 
+def _append_junit_case(suite: element_tree.Element, result: RunResult) -> None:
+    """Append one testcase element for a run result."""
+    case = element_tree.SubElement(
+        suite,
+        "testcase",
+        {
+            "name": xml_safe_text(result.case_id),
+            "classname": "battest",
+            "time": f"{result.duration_seconds:.3f}",
+        },
+    )
+    match result.outcome:
+        case Outcome.PASS:
+            return
+        case Outcome.FAIL:
+            failure_message = (
+                result.failures[0].message if result.failures else "failed"
+            )
+            failure = element_tree.SubElement(
+                case,
+                "failure",
+                {"message": xml_safe_text(failure_message)},
+            )
+            failure.text = xml_safe_text(_failure_block(result.failures))
+        case Outcome.ERROR:
+            error = element_tree.SubElement(
+                case,
+                "error",
+                {"message": xml_safe_text(result.error_message or "error")},
+            )
+            error.text = xml_safe_text(result.error_message or "")
+        case Outcome.TIMEOUT:
+            error = element_tree.SubElement(
+                case,
+                "error",
+                {"message": xml_safe_text(result.error_message or "timeout")},
+            )
+            error.text = xml_safe_text(result.error_message or "timeout")
+        case _:
+            unreachable: Never = result.outcome
+            raise ValueError(f"unhandled outcome: {unreachable}")
+
+
 def write_junit_xml(results: list[RunResult], path: Path) -> None:
     """Write an xunit2-style JUnit XML report."""
     failures = sum(1 for item in results if item.outcome == Outcome.FAIL)
@@ -151,45 +194,7 @@ def write_junit_xml(results: list[RunResult], path: Path) -> None:
         },
     )
     for result in results:
-        case = element_tree.SubElement(
-            suite,
-            "testcase",
-            {
-                "name": xml_safe_text(result.case_id),
-                "classname": "battest",
-                "time": f"{result.duration_seconds:.3f}",
-            },
-        )
-        match result.outcome:
-            case Outcome.PASS:
-                pass
-            case Outcome.FAIL:
-                failure_message = (
-                    result.failures[0].message if result.failures else "failed"
-                )
-                failure = element_tree.SubElement(
-                    case,
-                    "failure",
-                    {"message": xml_safe_text(failure_message)},
-                )
-                failure.text = xml_safe_text(_failure_block(result.failures))
-            case Outcome.ERROR:
-                error = element_tree.SubElement(
-                    case,
-                    "error",
-                    {"message": xml_safe_text(result.error_message or "error")},
-                )
-                error.text = xml_safe_text(result.error_message or "")
-            case Outcome.TIMEOUT:
-                error = element_tree.SubElement(
-                    case,
-                    "error",
-                    {"message": xml_safe_text(result.error_message or "timeout")},
-                )
-                error.text = xml_safe_text(result.error_message or "timeout")
-            case _:
-                unreachable: Never = result.outcome
-                raise ValueError(f"unhandled outcome: {unreachable}")
+        _append_junit_case(suite, result)
     tree = element_tree.ElementTree(suites)
     path.parent.mkdir(parents=True, exist_ok=True)
     tree.write(path, encoding="utf-8", xml_declaration=True)

@@ -149,25 +149,6 @@ def kill_process_tree(pid: int) -> None:
         )
 
 
-def drain_after_timeout(
-    process: TerminableProcess, timeout_seconds: float
-) -> tuple[bytes, bytes]:
-    """Collect remaining output after a kill, bounded by timeout_seconds."""
-    try:
-        return process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        LOGGER.error("process did not exit after timeout; sending kill")
-        process.kill()
-        try:
-            return process.communicate(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            LOGGER.error("process still alive after kill")
-            return b"", b""
-    except (OSError, ValueError):
-        LOGGER.debug("drain communicate failed; streams already closed", exc_info=True)
-        return b"", b""
-
-
 def abandon_lingering_process(process: TerminableProcess) -> bool:
     """Kill and wait with a bound; never block forever if the child survives."""
     if process.poll() is not None:
@@ -355,9 +336,14 @@ def _assign_and_resume(process: subprocess.Popen[bytes], job_handle: int) -> Non
         LOGGER.error("process _handle is null; cannot resume pid=%s", process.pid)
         raise OSError("process _handle is null; cannot resume suspended cmd.exe")
     if not kernel32.AssignProcessToJobObject(job_handle, process_handle):  # type: ignore[union-attr]
-        LOGGER.warning(
-            "AssignProcessToJobObject failed pid=%s; falling back to taskkill",
+        LOGGER.error(
+            "AssignProcessToJobObject failed pid=%s; refusing to resume "
+            "unisolated cmd.exe",
             process.pid,
+        )
+        raise OSError(
+            f"AssignProcessToJobObject failed pid={process.pid}; "
+            "refusing to resume cmd.exe outside the job"
         )
     status = _nt_resume_process(process_handle)
     if status != _NTSTATUS_SUCCESS:
@@ -428,7 +414,7 @@ def _write_stdin(stream: BinaryIO | None, payload: bytes | None) -> None:
             stream.write(payload)
             stream.flush()
     except OSError:
-        LOGGER.debug("failed to write stdin", exc_info=True)
+        LOGGER.warning("failed to write stdin", exc_info=True)
     finally:
         try:
             stream.close()
@@ -509,6 +495,49 @@ def _wait_capped(
     )
 
 
+def _creation_flags(job_handle: int | None) -> int:
+    """Return CreateProcess flags for an optional kill-on-close job."""
+    if sys.platform != "win32":
+        return 0
+    flags = CREATE_NEW_PROCESS_GROUP
+    if job_handle is not None:
+        flags |= CREATE_SUSPENDED
+    return flags
+
+
+def _spawn_captured_process(
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    creationflags: int,
+) -> subprocess.Popen[bytes]:
+    """Start the child with pipes; caller owns wait and handle cleanup."""
+    return subprocess.Popen(  # pylint: disable=consider-using-with
+        command,
+        cwd=str(cwd),
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creationflags,
+    )
+
+
+def _cleanup_spawned_process(
+    process: subprocess.Popen[bytes] | None,
+    job_handle: int | None,
+    abandoned: bool,
+) -> bool:
+    """Close pipes, kill leftovers, and close the job even if Popen failed."""
+    still_abandoned = abandoned
+    if process is not None:
+        close_process_streams(process)
+        if process.poll() is None:
+            still_abandoned = abandon_lingering_process(process) or still_abandoned
+    _close_job(job_handle)
+    return still_abandoned
+
+
 def run_process(
     command: list[str],
     cwd: Path,
@@ -530,29 +559,26 @@ def run_process(
         return ProcessResult(-1, "", "", True)
     stdin_bytes = encode_stdin(stdin_text, encoding)
     job_handle = _create_kill_on_close_job()
-    creationflags = 0
-    if sys.platform == "win32":
-        creationflags = CREATE_NEW_PROCESS_GROUP
-        if job_handle is not None:
-            creationflags |= CREATE_SUSPENDED
     timed_out = False
     overflowed = False
     abandoned = False
     stdout_bytes = b""
     stderr_bytes = b""
     exit_code = -1
-    process = subprocess.Popen(  # pylint: disable=consider-using-with
-        command,
-        cwd=str(cwd),
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=creationflags,
-    )
+    pid: int | None = None
+    process: subprocess.Popen[bytes] | None = None
     try:
+        process = _spawn_captured_process(
+            command, cwd, env, _creation_flags(job_handle)
+        )
+        pid = process.pid
         if job_handle is not None:
-            _assign_and_resume(process, job_handle)
+            try:
+                _assign_and_resume(process, job_handle)
+            except OSError:
+                if process.pid is not None:
+                    kill_process_tree(process.pid)
+                raise
         stdout_bytes, stderr_bytes, timed_out, overflowed, job_handle = _wait_capped(
             process,
             stdin_bytes,
@@ -564,10 +590,7 @@ def run_process(
             abandoned = abandon_lingering_process(process)
         exit_code = process.returncode if process.returncode is not None else -1
     finally:
-        close_process_streams(process)
-        if process.poll() is None:
-            abandoned = abandon_lingering_process(process) or abandoned
-        _close_job(job_handle)
+        abandoned = _cleanup_spawned_process(process, job_handle, abandoned)
     stdout = decode_output(stdout_bytes or b"", encoding)
     stderr = decode_output(stderr_bytes or b"", encoding)
     LOGGER.info(
@@ -579,7 +602,7 @@ def run_process(
         abandoned,
         len(stdout),
         len(stderr),
-        process.pid,
+        pid,
     )
     return ProcessResult(
         exit_code=exit_code,
@@ -588,7 +611,7 @@ def run_process(
         timed_out=timed_out,
         overflowed=overflowed,
         abandoned=abandoned,
-        pid=process.pid,
+        pid=pid,
     )
 
 

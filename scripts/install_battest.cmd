@@ -60,6 +60,13 @@ if "!BATTEST_URL!"=="NO_DIGEST" (
     goto :error_exit
 )
 
+if "!BATTEST_URL!"=="BAD_URL" (
+    echo ERROR: GitHub release asset URL is not a trusted GitHub download host.
+    echo.
+    echo Refusing to download from an unexpected host.
+    goto :error_exit
+)
+
 if "!BATTEST_URL!"=="NOT_FOUND" (
     echo ERROR: Failed to find Windows download URL from GitHub API.
     echo.
@@ -322,7 +329,22 @@ echo if (-not $asset^) { Write-Output 'NOT_FOUND'; exit 0 }
 echo $digest = $null
 echo if ($asset.PSObject.Properties['digest'] -and $asset.digest^) { $digest = [string]$asset.digest }
 echo if (-not $digest^) { Write-Output 'NO_DIGEST'; exit 0 }
-echo $line = $asset.browser_download_url + ' ' + $release.tag_name + ' ' + $digest
+echo $url = [string]$asset.browser_download_url
+echo try {
+echo     $parsed = [Uri]$url
+echo }
+echo catch {
+echo     Write-Output 'BAD_URL'; exit 0
+echo }
+echo $allowedHosts = @(
+echo     'github.com'
+echo     'objects.githubusercontent.com'
+echo     'release-assets.githubusercontent.com'
+echo ^)
+echo if ($parsed.Scheme -ne 'https' -or $allowedHosts -notcontains $parsed.Host^) {
+echo     Write-Output 'BAD_URL'; exit 0
+echo }
+echo $line = $url + ' ' + $release.tag_name + ' ' + $digest
 echo Write-Output $line
 ) > "!PS_GET_RELEASE!"
 exit /b 0

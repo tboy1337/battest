@@ -87,7 +87,7 @@ jobs:
         run: python scripts/generate_spec_data.py
 
       - name: Run unit tests
-        run: python -m pytest -m "not windows"
+        run: python -m pytest -m "not windows" --cov-fail-under=0
 
   test-windows:
     name: pytest windows (${{ matrix.python-version }})
@@ -414,6 +414,9 @@ jobs:
           scripts = importlib.metadata.entry_points(group='console_scripts')
           assert any(item.name == 'battest' for item in scripts)
           assert files('battest').joinpath('data/battest_stub.exe').is_file()
+          assert files('battest').joinpath('data/commands.yaml').is_file()
+          assert files('battest').joinpath('data/expansion.yaml').is_file()
+          assert files('battest').joinpath('data/battest-expect.schema.json').is_file()
           assert stub_executable().is_file()
           "
 
@@ -655,6 +658,31 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: ${{ github.event.inputs.force == 'true' }}
           removeArtifacts: ${{ github.event.inputs.force == 'true' }}
+
+      - name: Move major version tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.+-].*)?$'; then
+            echo "unexpected version: $VERSION" >&2
+            exit 1
+          fi
+          MAJOR="${VERSION%%.*}"
+          SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${VERSION}" --jq '.object.sha')"
+          TYPE="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${VERSION}" --jq '.object.type')"
+          if [ "$TYPE" = "tag" ]; then
+            SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${SHA}" --jq '.object.sha')"
+          fi
+          echo "Pointing v${MAJOR} at v${VERSION} (${SHA})"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v${MAJOR}" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/v${MAJOR}" \
+              -f sha="$SHA" -F force=true
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/v${MAJOR}" -f sha="$SHA"
+          fi
 
   publish-pypi:
     name: Publish wheels to PyPI

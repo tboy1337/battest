@@ -11,15 +11,22 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $analyzerSettings = Join-Path -Path $PSScriptRoot -ChildPath 'PSScriptAnalyzerSettings.psd1'
 . (Join-Path -Path $PSScriptRoot -ChildPath 'InstallerPs.Helpers.ps1')
 
-if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
-    Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck -MinimumVersion 1.21.0
+# Pin exact Gallery versions. -SkipPublisherCheck is required on GitHub-hosted
+# Windows images where PSGallery Authenticode often fails to chain.
+$scriptAnalyzerVersion = [version]'1.24.0'
+$pesterVersion = [version]'5.7.1'
+
+$analyzerInstalled = Get-Module -ListAvailable -Name PSScriptAnalyzer |
+    Where-Object { $_.Version -eq $scriptAnalyzerVersion }
+if (-not $analyzerInstalled) {
+    Install-Module -Name PSScriptAnalyzer -RequiredVersion $scriptAnalyzerVersion -Force -Scope CurrentUser -SkipPublisherCheck
 }
-$pester5 = Get-Module -ListAvailable -Name Pester |
-    Where-Object { $_.Version.Major -ge 5 }
-if (-not $pester5) {
-    Install-Module -Name Pester -Force -Scope CurrentUser -SkipPublisherCheck -MinimumVersion 5.0.0
+$pesterInstalled = Get-Module -ListAvailable -Name Pester |
+    Where-Object { $_.Version -eq $pesterVersion }
+if (-not $pesterInstalled) {
+    Install-Module -Name Pester -RequiredVersion $pesterVersion -Force -Scope CurrentUser -SkipPublisherCheck
 }
-Import-Module -Name Pester -MinimumVersion 5.0.0
+Import-Module -Name Pester -RequiredVersion $pesterVersion
 
 $analyzePaths = Get-PowerShellAnalyzePaths -ScriptsRoot $PSScriptRoot
 foreach ($path in $analyzePaths) {

@@ -17,6 +17,7 @@ source-roots=src
 # Pylint design metrics do not fit pydantic models, small typed containers,
 # or cmd.exe orchestration helpers that take many explicit parameters.
 # too-many-branches is left enabled so helper splits stay honest.
+# cyclic-import: schema.load_catalog and spec catalog YAML share schema.load_yaml_mapping.
 disable=raw-checker-failed,
         bad-inline-option,
         locally-disabled,
@@ -35,7 +36,8 @@ disable=raw-checker-failed,
         too-many-positional-arguments,
         broad-exception-caught,
         duplicate-code,
-        line-too-long
+        line-too-long,
+        cyclic-import
 enable=c-extension-no-member
 
 [REPORTS]

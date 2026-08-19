@@ -67,7 +67,7 @@ others); it does not isolate the filesystem. See [CLI](docs/cli.md) and
 
 ## GitHub Action
 
-Requires a Windows runner. Pin a published release tag, not a commit SHA.
+Requires a Windows runner. Use the moving major tag (`@v1`), not a commit SHA.
 
 ```yaml
 jobs:
@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: battest
-        uses: tboy1337/battest@v1.0.7
+        uses: tboy1337/battest@v1
         with:
           path: tests
           safe-defaults: "true"
@@ -114,9 +114,12 @@ curl -L https://raw.githubusercontent.com/tboy1337/battest/main/scripts/install_
 ```
 
 The installer always fetches the latest GitHub release and verifies the zip
-SHA-256 digest before extract. The bootstrap `.cmd` itself is not
-digest-pinned; the exe payload is. Restart the terminal or IDE after install
-so `PATH` updates are visible.
+SHA-256 digest before extract. Download URLs must be `https` on `github.com`,
+`objects.githubusercontent.com`, or `release-assets.githubusercontent.com`.
+The bootstrap `.cmd` itself is not digest-pinned; the exe payload is. Pinning
+the curl URL to a release tag (instead of `main`) is stricter if you want a
+known installer script. Restart the terminal or IDE after install so `PATH`
+updates are visible.
 
 **Manual zip:** download `Battest-vX.Y.Z.zip` from
 [GitHub Releases](https://github.com/tboy1337/battest/releases) and run

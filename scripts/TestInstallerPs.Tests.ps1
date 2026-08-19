@@ -21,6 +21,12 @@ Describe 'Installer batch PowerShell parity' {
 }
 
 Describe 'Installer PowerShell PSScriptAnalyzer' {
+    It 'includes check_action_ps1.ps1 in analyzer paths' {
+        $paths = Get-PowerShellAnalyzePaths -ScriptsRoot $script:ScriptsRoot
+        $names = $paths | ForEach-Object { Split-Path -Path $_ -Leaf }
+        $names | Should -Contain 'check_action_ps1.ps1'
+    }
+
     It 'reports no warnings for installer fixtures and smoke scripts' {
         if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
             Set-ItResult -Inconclusive -Because 'PSScriptAnalyzer is not installed'
@@ -56,7 +62,7 @@ Describe 'Get-LatestBattestRelease.ps1' {
                 assets     = @(
                     [PSCustomObject]@{
                         name                 = 'Battest-v0.1.0.zip'
-                        browser_download_url = 'https://example.com/Battest-v0.1.0.zip'
+                        browser_download_url = 'https://github.com/tboy1337/battest/releases/download/v0.1.0/Battest-v0.1.0.zip'
                         digest               = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
                     }
                 )
@@ -65,7 +71,7 @@ Describe 'Get-LatestBattestRelease.ps1' {
 
         $output = & $fixturePath
         $LASTEXITCODE | Should -Be 0
-        $output | Should -Be 'https://example.com/Battest-v0.1.0.zip v0.1.0 sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+        $output | Should -Be 'https://github.com/tboy1337/battest/releases/download/v0.1.0/Battest-v0.1.0.zip v0.1.0 sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
     }
 
     It 'outputs NO_DIGEST when the asset digest is missing' {
@@ -78,7 +84,7 @@ Describe 'Get-LatestBattestRelease.ps1' {
                 assets     = @(
                     [PSCustomObject]@{
                         name                 = 'Battest-v0.1.0.zip'
-                        browser_download_url = 'https://example.com/Battest-v0.1.0.zip'
+                        browser_download_url = 'https://github.com/tboy1337/battest/releases/download/v0.1.0/Battest-v0.1.0.zip'
                     }
                 )
             }
@@ -87,6 +93,28 @@ Describe 'Get-LatestBattestRelease.ps1' {
         $output = & $fixturePath
         $LASTEXITCODE | Should -Be 0
         $output | Should -Be 'NO_DIGEST'
+    }
+
+    It 'outputs BAD_URL when the download host is not GitHub' {
+        $fixturePath = Join-Path $script:InstallerPsRoot 'Get-LatestBattestRelease.ps1'
+        Mock Invoke-RestMethod {
+            return [PSCustomObject]@{
+                prerelease = $false
+                draft      = $false
+                tag_name   = 'v0.1.0'
+                assets     = @(
+                    [PSCustomObject]@{
+                        name                 = 'Battest-v0.1.0.zip'
+                        browser_download_url = 'https://example.com/Battest-v0.1.0.zip'
+                        digest               = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+                    }
+                )
+            }
+        }
+
+        $output = & $fixturePath
+        $LASTEXITCODE | Should -Be 0
+        $output | Should -Be 'BAD_URL'
     }
 
     It 'outputs NOT_FOUND when the latest release is a prerelease' {

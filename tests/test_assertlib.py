@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import cast
 
 from pydantic import ValidationError
@@ -18,9 +19,10 @@ from battest.assertlib import (
     match_mock_calls,
     match_output,
     newline_requirement_failure,
+    read_capped_bytes,
     unified_diff_text,
 )
-from battest.constants import MAX_REGEX_PATTERN_LENGTH
+from battest.constants import MAX_CAPTURE_BYTES, MAX_REGEX_PATTERN_LENGTH
 from battest.models import (
     CallExpectation,
     Case,
@@ -31,7 +33,7 @@ from battest.models import (
     NewlineMode,
     OutputMatcher,
 )
-from battest.retimeout import RegexTimeoutError, search_with_timeout
+from battest.retimeout import RegexTimeoutError, _search_worker, search_with_timeout
 
 
 def test_newline_auto_normalizes() -> None:
@@ -633,6 +635,130 @@ def test_search_with_timeout_reports_invalid_pattern() -> None:
         search_with_timeout("(", "abc", timeout_seconds=1.0)
 
 
+def test_search_worker_sends_re_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Conn:
+        def __init__(self) -> None:
+            self.sent: object = None
+            self.closed = False
+
+        def send(self, payload: object) -> None:
+            self.sent = payload
+
+        def close(self) -> None:
+            self.closed = True
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise re.error("bad-pattern")
+
+    monkeypatch.setattr("battest.retimeout.re.search", boom)
+    conn = Conn()
+    _search_worker("a", "a", conn)
+    assert conn.sent == ("error", "bad-pattern")
+    assert conn.closed is True
+
+
+def test_search_worker_sends_generic_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Conn:
+        def __init__(self) -> None:
+            self.sent: object = None
+
+        def send(self, payload: object) -> None:
+            self.sent = payload
+
+        def close(self) -> None:
+            return None
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("worker-boom")
+
+    monkeypatch.setattr("battest.retimeout.re.search", boom)
+    conn = Conn()
+    _search_worker("a", "a", conn)
+    assert conn.sent == ("error", "worker-boom")
+
+
+def test_search_with_timeout_raises_worker_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeParent:
+        def poll(self, _timeout: float) -> bool:
+            return True
+
+        def recv(self) -> tuple[str, str]:
+            return ("error", "unterminated")
+
+        def close(self) -> None:
+            return None
+
+    class FakeChild:
+        def close(self) -> None:
+            return None
+
+    class FakeWorker:
+        def start(self) -> None:
+            return None
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return False
+
+        def terminate(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "battest.retimeout.Pipe", lambda duplex=False: (FakeParent(), FakeChild())
+    )
+    monkeypatch.setattr("battest.retimeout.Process", lambda **_kwargs: FakeWorker())
+    with pytest.raises(re.error, match="unterminated"):
+        search_with_timeout("ok", "ok", timeout_seconds=1.0)
+
+
+def test_search_with_timeout_terminates_live_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeParent:
+        def poll(self, _timeout: float) -> bool:
+            return False
+
+        def close(self) -> None:
+            return None
+
+    class FakeChild:
+        def close(self) -> None:
+            return None
+
+    class FakeWorker:
+        def __init__(self) -> None:
+            self.terminated = False
+
+        def start(self) -> None:
+            return None
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return not self.terminated
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+    worker = FakeWorker()
+    monkeypatch.setattr(
+        "battest.retimeout.Pipe", lambda duplex=False: (FakeParent(), FakeChild())
+    )
+    monkeypatch.setattr("battest.retimeout.Process", lambda **_kwargs: worker)
+    with pytest.raises(RegexTimeoutError, match="exceeded"):
+        search_with_timeout("ok", "ok", timeout_seconds=0.1)
+    assert worker.terminated is True
+
+
 def test_match_mock_calls() -> None:
     mocks = {
         "ipconfig": MockSpec(expect_calls=[CallExpectation(args_contains="/flushdns")])
@@ -683,3 +809,60 @@ def test_evaluate_case_pass(tmp_path: Path) -> None:
     kinds = {item.kind for item in failed}
     assert "exit_code" in kinds
     assert "stdout" in kinds
+
+
+def test_read_capped_bytes_rejects_oversize(tmp_path: Path) -> None:
+    path = tmp_path / "huge.txt"
+    path.write_bytes(b"x" * 32)
+    data, error = read_capped_bytes(path, max_bytes=8)
+    assert data is None
+    assert error is not None
+    assert "byte limit" in error
+
+
+def test_file_matcher_overflow_is_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "out.txt").write_text("hello-world", encoding="utf-8")
+
+    def tiny_read(
+        _path: Path, max_bytes: int = MAX_CAPTURE_BYTES
+    ) -> tuple[bytes | None, str | None]:
+        return None, f"exceeded {max_bytes} byte limit"
+
+    monkeypatch.setattr("battest.assertlib.read_capped_bytes", tiny_read)
+    failures = match_files(
+        [FileMatcher(path="out.txt", contains="hello")],
+        work,
+        tmp_path,
+        200,
+    )
+    assert failures
+    assert "byte limit" in failures[0].message
+
+
+def test_equals_file_overflow_is_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "input.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    (tmp_path / "want.txt").write_text("hello", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "expect.yaml",
+        script_path=script,
+        expect=Expect(stdout=OutputMatcher(equals_file="want.txt")),
+    )
+
+    def tiny_read(
+        _path: Path, max_bytes: int = MAX_CAPTURE_BYTES
+    ) -> tuple[bytes | None, str | None]:
+        return None, f"exceeded {max_bytes} byte limit"
+
+    monkeypatch.setattr("battest.assertlib.read_capped_bytes", tiny_read)
+    failures = evaluate_case(case, 0, "hello", "", {}, tmp_path, {}, 200)
+    assert failures
+    assert any("byte limit" in item.message for item in failures)

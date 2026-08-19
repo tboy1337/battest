@@ -11,8 +11,6 @@ import tempfile
 import threading
 from typing import Mapping
 
-import yaml
-
 from battest.constants import PERCENT_TILDE_PATTERN, VALID_MODIFIER_CHARS
 from battest.logging_config import get_logger
 
@@ -105,10 +103,22 @@ def _string_list_set(value: object) -> frozenset[str]:
 
 
 def _load_yaml_mapping(path: Path) -> dict[str, object]:
+    """Parse packaged catalog YAML with the same alias and size bounds as fixtures.
+
+    Inline import avoids a circular import: schema.py loads catalogs via
+    spec.load_catalog at module level.
+    """
     LOGGER.debug("loading yaml mapping from %s", path)
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise ValueError(f"expected mapping in {path}")
+    # schema.py imports load_catalog at module level; keep this import lazy.
+    from battest.schema import (  # isort: skip  # pylint: disable=import-outside-toplevel
+        SchemaError,
+        load_yaml_mapping,
+    )
+
+    try:
+        loaded = load_yaml_mapping(path)
+    except SchemaError as exc:
+        raise ValueError(str(exc)) from exc
     return {str(key): value for key, value in loaded.items()}
 
 

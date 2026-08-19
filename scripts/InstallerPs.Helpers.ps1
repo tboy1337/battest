@@ -180,12 +180,13 @@ function Get-PowerShellAnalyzePaths {
     param([string]$ScriptsRoot)
 
     # InstallerPs.Helpers.ps1 uses unapproved verbs (Apply-/Normalize-) for
-    # fixture parity helpers. check_action_ps1.ps1 installs modules at runtime.
-    # Keep both out of ScriptAnalyzer; fixtures and action scripts stay in.
+    # fixture parity helpers. check_action_ps1.ps1 is analyzed with the rest
+    # of the action scripts; Gallery install uses named parameters.
     $paths = @(
         (Join-Path $ScriptsRoot 'TestExeSmoke.Helpers.ps1'),
         (Join-Path $ScriptsRoot 'test_exe_smoke.ps1'),
-        (Join-Path $ScriptsRoot 'run-battest-action.ps1')
+        (Join-Path $ScriptsRoot 'run-battest-action.ps1'),
+        (Join-Path $ScriptsRoot 'check_action_ps1.ps1')
     )
     $paths += Get-InstallerPsFixturePaths -InstallerPsRoot (Join-Path $ScriptsRoot 'installer_ps')
     return $paths

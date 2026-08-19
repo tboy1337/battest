@@ -578,6 +578,24 @@ def test_ci_windows_pytest_rebuilds_stub_without_pe_byte_match() -> None:
     assert drift_steps == []
 
 
+def test_ci_unit_job_does_not_fail_coverage_on_non_windows() -> None:
+    workflow = _load_ci_workflow()
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    test_unit = jobs["test-unit"]
+    assert isinstance(test_unit, dict)
+    steps = test_unit["steps"]
+    assert isinstance(steps, list)
+    run_step = next(
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == "Run unit tests"
+    )
+    command = str(run_step.get("run"))
+    assert 'pytest -m "not windows"' in command
+    assert "--cov-fail-under=0" in command
+
+
 def test_ci_dependency_graph_does_not_block_release() -> None:
     workflow = _load_ci_workflow()
     jobs = workflow["jobs"]
@@ -705,6 +723,19 @@ def test_ci_release_jobs_are_atomic() -> None:
     ]
     assert "Download Windows build" in download_names
     assert "Download Python dist" in download_names
+    assert "Move major version tag" in download_names
+    move_major = next(
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == "Move major version tag"
+    )
+    move_run = str(move_major.get("run"))
+    move_env = move_major.get("env")
+    assert isinstance(move_env, dict)
+    assert "GITHUB_TOKEN" in str(move_env.get("GH_TOKEN"))
+    assert "git/refs/tags/v${MAJOR}" in move_run
+    assert "force=true" in move_run
+    assert "refs/tags/v${MAJOR}" in move_run
     release = next(
         step
         for step in steps
@@ -789,6 +820,9 @@ def test_ci_package_smoke_builds_and_checks_dist() -> None:
     assert "import battest" in str(install.get("run"))
     assert "console_scripts" in str(install.get("run"))
     assert "battest_stub.exe" in str(install.get("run"))
+    assert "commands.yaml" in str(install.get("run"))
+    assert "expansion.yaml" in str(install.get("run"))
+    assert "battest-expect.schema.json" in str(install.get("run"))
     assert "stub_executable" in str(install.get("run"))
 
 

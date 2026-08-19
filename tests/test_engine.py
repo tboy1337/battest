@@ -7,11 +7,17 @@ import subprocess
 import sys
 import time
 
+try:
+    import _winapi
+except ImportError:
+    _winapi = None  # type: ignore[assignment]
+
 import pytest
 from pytest_mock import MockerFixture
 
 from battest.constants import (
     CWD_DUMP_NAME,
+    ENV_DUMP_NAME,
     MAX_CAPTURE_BYTES,
     TEARDOWN_MIN_SECONDS,
     WRAPPER_NAME,
@@ -22,6 +28,7 @@ from battest.engine import (
     _combined_env,
     _evaluate_after_run,
     _prepare_work_dir,
+    _reject_blocking_env_dump,
     _run_process,
     _script_warnings,
     _seed_work_dir,
@@ -40,6 +47,7 @@ from battest.mocks import MockError
 from battest.models import (
     Case,
     EngineConfig,
+    EnvExpect,
     Expect,
     MockSpec,
     Outcome,
@@ -60,7 +68,6 @@ from battest.process import (
     close_process_streams,
     cmd_executable,
     coerce_process_result,
-    drain_after_timeout,
     is_path_outside_directory,
     kill_process_tree,
     system32_executable,
@@ -360,7 +367,9 @@ def test_combined_env_without_fixture_path_keeps_inherited(
 
 
 def test_combined_env_strips_inherited_battest_helpers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(
         "battest.engine.os.environ",
@@ -381,11 +390,13 @@ def test_combined_env_strips_inherited_battest_helpers(
         env={"BATTEST_CUSTOM": "from-fixture"},
         expect=Expect(),
     )
-    env = _combined_env(case, tmp_path, None)
+    with caplog.at_level("DEBUG", logger="battest.engine"):
+        env = _combined_env(case, tmp_path, None)
     assert "BATTEST_SUT" not in env
     assert "battest_envfile" not in env
     assert env["BATTEST_CUSTOM"] == "from-fixture"
     assert env["FOO"] == "keep"
+    assert "fixture_battest_keys=True" in caplog.text
 
 
 def test_evaluate_after_run_errors_when_call_logs_unreadable(
@@ -948,43 +959,39 @@ def test_prepare_work_dir_copies_script_setup_teardown(tmp_path: Path) -> None:
     assert (work / "teardown.cmd").is_file()
 
 
-def test_drain_after_timeout_kills_when_communicate_hangs() -> None:
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.killed = False
-            self.calls = 0
-
-        def communicate(
-            self, input: bytes | None = None, timeout: float | None = None
-        ) -> tuple[bytes, bytes]:
-            self.calls += 1
-            if self.calls == 1:
-                raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
-            return b"out", b"err"
-
-        def kill(self) -> None:
-            self.killed = True
-
-    fake = FakeProcess()
-    stdout, stderr = drain_after_timeout(fake, 0.1)
-    assert fake.killed is True
-    assert stdout == b"out"
-    assert stderr == b"err"
+def test_seed_work_dir_rejects_escaping_symlink(tmp_path: Path) -> None:
+    base = tmp_path / "fixtures"
+    base.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("classified", encoding="utf-8")
+    link = base / "link.txt"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("creating symlinks is not permitted on this host")
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(ValueError, match="symlink or junction"):
+        _seed_work_dir(work, [link], base)
 
 
-def test_drain_after_timeout_returns_empty_if_kill_hangs() -> None:
-    class HangProcess:
-        def communicate(
-            self, input: bytes | None = None, timeout: float | None = None
-        ) -> tuple[bytes, bytes]:
-            raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
-
-        def kill(self) -> None:
-            return None
-
-    stdout, stderr = drain_after_timeout(HangProcess(), 0.01)
-    assert stdout == b""
-    assert stderr == b""
+def test_seed_work_dir_rejects_escaping_junction(tmp_path: Path) -> None:
+    if _winapi is None:
+        pytest.skip("junctions are not available on this host")
+    base = tmp_path / "fixtures"
+    base.mkdir()
+    outside = tmp_path / "secret-dir"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("classified", encoding="utf-8")
+    link = base / "leak"
+    try:
+        _winapi.CreateJunction(str(outside), str(link))
+    except OSError:
+        pytest.skip("creating junctions is not permitted on this host")
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(ValueError, match="symlink or junction"):
+        _seed_work_dir(work, [link], base)
 
 
 def test_teardown_oserror_is_logged(
@@ -1803,6 +1810,33 @@ def test_snapshot_env_warns_when_dump_missing(
     assert "env dump missing" in caplog.text
 
 
+def test_snapshot_env_errors_when_required_dump_missing(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="env dump missing"):
+        _snapshot_env(tmp_path, "utf-8", require_file=True)
+
+
+def test_snapshot_env_errors_when_dump_is_directory(tmp_path: Path) -> None:
+    (tmp_path / ENV_DUMP_NAME).mkdir()
+    with pytest.raises(ValueError, match="not a regular file"):
+        _snapshot_env(tmp_path, "utf-8")
+
+
+def test_snapshot_env_errors_when_dump_exceeds_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dump = tmp_path / ENV_DUMP_NAME
+    dump.write_text("A=1\n", encoding="utf-8")
+
+    def tiny_read(
+        _path: Path, max_bytes: int = MAX_CAPTURE_BYTES
+    ) -> tuple[bytes | None, str | None]:
+        return None, f"exceeded {max_bytes} byte limit"
+
+    monkeypatch.setattr("battest.engine.read_capped_bytes", tiny_read)
+    with pytest.raises(ValueError, match="unreadable"):
+        _snapshot_env(tmp_path, "utf-8")
+
+
 def test_cwd_outside_workdir_appends_warning(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2013,12 +2047,32 @@ def test_coerce_process_result_rejects_unexpected_shapes() -> None:
         coerce_process_result((1, "a", "b", "no"))
 
 
-def test_drain_after_timeout_oserror_returns_empty() -> None:
-    class Closed:
-        def communicate(self, timeout: float | None = None) -> tuple[bytes, bytes]:
-            raise OSError("already closed")
+def test_abandon_lingering_process_false_when_already_exited() -> None:
+    class Dead:
+        def poll(self) -> int | None:
+            return 0
 
-    assert drain_after_timeout(Closed(), 0.1) == (b"", b"")
+        def kill(self) -> None:
+            raise AssertionError("kill must not run")
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise AssertionError("wait must not run")
+
+    assert abandon_lingering_process(Dead()) is False
+
+
+def test_abandon_lingering_process_true_when_wait_times_out() -> None:
+    class Stuck:
+        def poll(self) -> int | None:
+            return None
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
+
+    assert abandon_lingering_process(Stuck()) is True
 
 
 def test_abandon_lingering_process_true_when_poll_stays_none() -> None:
@@ -2048,7 +2102,9 @@ def test_close_process_streams_skips_none_and_oserror() -> None:
     close_process_streams(FakePopen())
 
 
-def test_write_stdin_handles_none_payload_and_oserror() -> None:
+def test_write_stdin_handles_none_payload_and_oserror(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     _write_stdin(None, b"x")
 
     class BoomStream:
@@ -2061,7 +2117,9 @@ def test_write_stdin_handles_none_payload_and_oserror() -> None:
         def close(self) -> None:
             raise OSError("close")
 
-    _write_stdin(BoomStream(), b"payload")
+    with caplog.at_level("WARNING", logger="battest.process"):
+        _write_stdin(BoomStream(), b"payload")
+    assert "failed to write stdin" in caplog.text
 
 
 def test_read_capped_stream_overflow_and_oserror() -> None:
@@ -2155,6 +2213,18 @@ def test_job_create_and_assign_failure_paths(
         _handle = 11
 
     monkeypatch.setattr("battest.process.ctypes_windll", lambda: Windll())
+    monkeypatch.setattr("battest.process._nt_resume_process", lambda _handle: 0)
+    with pytest.raises(OSError, match="AssignProcessToJobObject failed"):
+        _assign_and_resume(Process(), 7)
+
+    class AssignOkKernel(Kernel):
+        def AssignProcessToJobObject(self, *_args: object) -> int:
+            return 1
+
+    class AssignOkWindll:
+        kernel32 = AssignOkKernel()
+
+    monkeypatch.setattr("battest.process.ctypes_windll", lambda: AssignOkWindll())
     monkeypatch.setattr("battest.process._nt_resume_process", lambda _handle: 1)
     with pytest.raises(OSError, match="NtResumeProcess failed"):
         _assign_and_resume(Process(), 7)
@@ -2343,3 +2413,138 @@ def test_run_process_keeps_truncated_extra_drain(
     assert result.overflowed is True
     assert len(result.stdout.encode("utf-8")) <= 4
     assert len(result.stderr.encode("utf-8")) <= 4
+
+
+def test_run_process_closes_job_when_popen_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    closed: list[int | None] = []
+    monkeypatch.setattr("battest.process._create_kill_on_close_job", lambda: 99)
+    monkeypatch.setattr(
+        "battest.process._close_job", lambda handle: closed.append(handle)
+    )
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr("battest.process.subprocess.Popen", boom)
+    from battest.process import run_process as run_proc
+
+    with pytest.raises(OSError, match="spawn failed"):
+        run_proc(["cmd"], tmp_path, {}, "", 1.0, "utf-8")
+    assert closed == [99]
+
+
+def test_missing_env_dump_with_expect_env_is_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0, env=EnvExpect(unset=["SECRET"])),
+    )
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> tuple[int, str, str, bool]:
+        return 0, "", "", False
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert result.error_message is not None
+    assert "env dump missing" in result.error_message
+
+
+def test_duration_includes_teardown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    teardown = tmp_path / "teardown.cmd"
+    teardown.write_text("@echo off\n", encoding="utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        teardown_path=teardown,
+        expect=Expect(exit_code=0),
+    )
+
+    def fake_run(
+        command: list[str],
+        cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> tuple[int, str, str, bool]:
+        dump = cwd / ENV_DUMP_NAME
+        if not dump.is_file():
+            dump.write_text("A=1\n", encoding="utf-8")
+        if any("teardown.cmd" in str(part) for part in command):
+            time.sleep(0.25)
+        return 0, "", "", False
+
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.PASS
+    assert result.duration_seconds >= 0.2
+
+
+def test_abandoned_process_skips_rmtree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("battest.engine.require_windows", lambda: None)
+    monkeypatch.setattr("battest.engine.console_encoding", lambda: "utf-8")
+    script = tmp_path / "run.cmd"
+    script.write_text("@echo off\n", encoding="utf-8")
+    case = Case(
+        case_id="t",
+        description="t",
+        source_path=tmp_path / "t.yaml",
+        script_path=script,
+        expect=Expect(exit_code=0),
+    )
+
+    def fake_run(
+        _command: list[str],
+        _cwd: Path,
+        _env: dict[str, str],
+        _stdin: str,
+        _timeout: float,
+        _encoding: str,
+    ) -> ProcessResult:
+        return ProcessResult(1, "", "", False, abandoned=True, pid=4242)
+
+    removed: list[Path] = []
+    monkeypatch.setattr("battest.engine._run_process", fake_run)
+    monkeypatch.setattr(
+        "battest.engine.shutil.rmtree", lambda path: removed.append(path)
+    )
+    result = execute_case(case, EngineConfig())
+    assert result.outcome == Outcome.ERROR
+    assert any("abandoned still-alive" in item for item in result.warnings)
+    assert removed == []
+
+
+def test_prepare_rejects_blocking_env_dump_directory(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / ENV_DUMP_NAME).mkdir()
+    with pytest.raises(ValueError, match="not a regular file"):
+        _reject_blocking_env_dump(work)

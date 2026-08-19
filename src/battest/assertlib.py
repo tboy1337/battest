@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from typing import Never
 
-from battest.constants import DEFAULT_MAX_DIFF
+from battest.constants import DEFAULT_MAX_DIFF, MAX_CAPTURE_BYTES
 from battest.logging_config import get_logger
 from battest.models import (
     AssertionFailure,
@@ -23,6 +23,7 @@ from battest.models import (
 from battest.retimeout import RegexTimeoutError, search_with_timeout
 
 LOGGER = get_logger("assertlib")
+_READ_CHUNK_SIZE = 65_536
 
 
 def unified_diff_text(expected: str, actual: str, max_diff: int) -> str:
@@ -82,10 +83,39 @@ def confined_source_path(source_dir: Path, relative: str) -> Path | None:
     return confined_work_path(source_dir, relative)
 
 
+def read_capped_bytes(
+    path: Path, max_bytes: int = MAX_CAPTURE_BYTES
+) -> tuple[bytes | None, str | None]:
+    """Read a file up to max_bytes. Overflow or OSError returns an error string."""
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        with path.open("rb") as handle:
+            while True:
+                data = handle.read(_READ_CHUNK_SIZE)
+                if not data:
+                    break
+                if total + len(data) > max_bytes:
+                    LOGGER.error("file %s exceeds %s bytes", path, max_bytes)
+                    return None, f"exceeded {max_bytes} byte limit"
+                chunks.append(data)
+                total += len(data)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        LOGGER.error("cannot read %s: %s", path, exc)
+        return None, str(exc)
+    return b"".join(chunks), None
+
+
 def _read_text_exact(path: Path, encoding: str) -> str:
-    """Read a text file without translating newlines."""
-    with path.open(encoding=encoding, newline="") as handle:
-        return handle.read()
+    """Read a text file without translating newlines, capped at MAX_CAPTURE_BYTES."""
+    data, error = read_capped_bytes(path)
+    if error is not None:
+        raise OSError(error)
+    if data is None:
+        raise OSError("file produced no bytes")
+    return data.decode(encoding)
 
 
 def _read_equals_file(source_dir: Path, relative: str) -> tuple[str | None, str | None]:
@@ -102,6 +132,11 @@ def _read_equals_file(source_dir: Path, relative: str) -> tuple[str | None, str 
         return None, f"equals_file unreadable: {relative} (not valid utf-8: {exc})"
     except OSError as exc:
         LOGGER.error("equals_file unreadable %s: %s", path, exc)
+        if "byte limit" in str(exc):
+            return (
+                None,
+                f"equals_file exceeded {MAX_CAPTURE_BYTES} byte limit: {relative}",
+            )
         return None, f"equals_file unreadable: {relative} ({exc})"
 
 
@@ -438,6 +473,11 @@ def _read_work_file(
         )
     except OSError as exc:
         LOGGER.error("failed to read %s: %s", path, exc)
+        if "byte limit" in str(exc):
+            return None, _fail(
+                "files",
+                f"file {matcher.path} exceeded {MAX_CAPTURE_BYTES} byte limit",
+            )
         return None, _fail(
             "files",
             f"failed to read {matcher.path} for content check: {exc}",

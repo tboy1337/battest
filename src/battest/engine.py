@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import multiprocessing
 import os
 from pathlib import Path
 import shutil
@@ -11,7 +12,7 @@ import sys
 import tempfile
 import time
 
-from battest.assertlib import evaluate_case
+from battest.assertlib import evaluate_case, read_capped_bytes
 from battest.constants import (
     BATTEST_PREFIX,
     CWD_DUMP_NAME,
@@ -159,8 +160,13 @@ def _combined_env(
     if mock_dir is not None:
         env[path_key] = str(mock_dir) + os.pathsep + env.get(path_key, "")
         LOGGER.debug("PATH prefixed with mock dir %s key=%s", mock_dir, path_key)
+    helper_from_fixture = any(
+        key.upper().startswith(BATTEST_PREFIX) for key in case.env
+    )
     LOGGER.debug(
-        "combined env work_dir=%s helper_battest_keys_injected=false", work_dir
+        "combined env work_dir=%s fixture_battest_keys=%s",
+        work_dir,
+        helper_from_fixture,
     )
     return env
 
@@ -193,16 +199,39 @@ def teardown_timeout(deadline: float) -> float:
     return max(remaining_timeout(deadline), TEARDOWN_MIN_SECONDS)
 
 
-def _snapshot_env(work_dir: Path, encoding: str) -> dict[str, str]:
+def _snapshot_env(
+    work_dir: Path,
+    encoding: str,
+    *,
+    require_file: bool = False,
+) -> dict[str, str]:
     env_dump = work_dir / ENV_DUMP_NAME
+    if env_dump.exists() and not env_dump.is_file():
+        LOGGER.error("env dump is not a regular file at %s", env_dump)
+        raise ValueError(f"env dump is not a regular file: {env_dump}")
     if not env_dump.is_file():
+        if require_file:
+            LOGGER.error("env dump missing at %s", env_dump)
+            raise ValueError(f"env dump missing: {env_dump}")
         LOGGER.warning(
             "env dump missing at %s; treating captured env as empty", env_dump
         )
         return {}
-    return filter_helper_vars(
-        parse_set_output(env_dump.read_text(encoding=encoding, errors="replace"))
-    )
+    data, error = read_capped_bytes(env_dump)
+    if error is not None:
+        LOGGER.error("cannot read env dump %s: %s", env_dump, error)
+        raise ValueError(f"env dump unreadable: {env_dump} ({error})")
+    if data is None:
+        raise ValueError(f"env dump unreadable: {env_dump}")
+    return filter_helper_vars(parse_set_output(data.decode(encoding, errors="replace")))
+
+
+def _reject_blocking_env_dump(work_dir: Path) -> None:
+    """Refuse to start when the wrapper env dump path is blocked by a non-file."""
+    env_dump = work_dir / ENV_DUMP_NAME
+    if env_dump.exists() and not env_dump.is_file():
+        LOGGER.error("env dump path is not a regular file: %s", env_dump)
+        raise ValueError(f"env dump path is not a regular file: {env_dump}")
 
 
 def _cwd_warning(work_dir: Path, encoding: str) -> str | None:
@@ -336,6 +365,24 @@ def _apply_teardown_result(result: RunResult, teardown_error: str | None) -> Run
     )
 
 
+def _with_duration(result: RunResult, started: float) -> RunResult:
+    """Stamp wall-clock duration after teardown has finished."""
+    return RunResult(
+        case_id=result.case_id,
+        description=result.description,
+        outcome=result.outcome,
+        exit_code=result.exit_code,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        env=result.env,
+        mock_calls=result.mock_calls,
+        failures=result.failures,
+        duration_seconds=time.perf_counter() - started,
+        error_message=result.error_message,
+        warnings=result.warnings,
+    )
+
+
 def _evaluate_after_run(
     case: Case,
     config: EngineConfig,
@@ -350,7 +397,23 @@ def _evaluate_after_run(
     stderr: str,
     timed_out: bool,
 ) -> RunResult:
-    captured_env = _snapshot_env(work_dir, encoding)
+    captured_env: dict[str, str] = {}
+    require_file = case.expect.env is not None and not timed_out
+    try:
+        captured_env = _snapshot_env(work_dir, encoding, require_file=require_file)
+    except ValueError as exc:
+        LOGGER.error("cannot snapshot env for %s: %s", case.case_id, exc)
+        return RunResult(
+            case_id=case.case_id,
+            description=case.description,
+            outcome=Outcome.ERROR,
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            duration_seconds=duration,
+            error_message=str(exc),
+            warnings=warnings,
+        )
     cwd_warning = _cwd_warning(work_dir, encoding)
     if cwd_warning is not None:
         warnings = list(warnings) + [cwd_warning]
@@ -438,6 +501,7 @@ def _prepare_work_dir(
     if case.teardown_path is not None:
         to_copy.append(case.teardown_path)
     _seed_work_dir(work_dir, to_copy, base_dir)
+    _reject_blocking_env_dump(work_dir)
     mocks = effective_mocks(case.mocks, case.allow, config.safe_defaults)
     mock_dir = write_mock_tree(work_dir, mocks, encoding=encoding) if mocks else None
     sut_path = _relocated_path(work_dir, case.script_path, base_dir)
@@ -466,17 +530,80 @@ def _prepare_work_dir(
     )
 
 
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """True for symlinks and Windows junctions without following the target."""
+    if path.is_symlink():
+        return True
+    try:
+        stats = path.lstat()
+    except OSError:
+        return False
+    try:
+        attrs = stats.st_file_attributes
+    except AttributeError:
+        return False
+    return bool(attrs & _FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _path_escapes(path: Path, base: Path) -> bool:
+    try:
+        path.resolve().relative_to(base)
+    except (OSError, ValueError):
+        return True
+    return False
+
+
+def _copy_seed_entry(source: Path, destination: Path, resolved_base: Path) -> None:
+    """Copy one fixture path without following escaping junctions or symlinks."""
+    if _is_reparse_point(source):
+        if _path_escapes(source, resolved_base):
+            LOGGER.error(
+                "seed path %s is a symlink or junction that escapes %s",
+                source,
+                resolved_base,
+            )
+            raise ValueError(
+                f"copy path {source} is a symlink or junction that escapes "
+                f"the fixture directory {resolved_base}"
+            )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=True)
+            return
+        shutil.copy2(source, destination, follow_symlinks=False)
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir():
+        destination.mkdir(parents=True, exist_ok=True)
+        for child in source.iterdir():
+            _copy_seed_entry(child, destination / child.name, resolved_base)
+        return
+    shutil.copy2(source, destination)
+
+
 def _seed_work_dir(work_dir: Path, copy_paths: list[Path], base_dir: Path) -> None:
     resolved_base = base_dir.resolve()
     for source in copy_paths:
-        relative = source.resolve().relative_to(resolved_base)
+        try:
+            # Do not follow junctions/symlinks when computing the destination
+            # name; escaping links are rejected in _copy_seed_entry.
+            relative = source.absolute().relative_to(resolved_base)
+        except ValueError as exc:
+            LOGGER.error(
+                "seed path %s is not under fixture directory %s",
+                source,
+                resolved_base,
+            )
+            raise ValueError(
+                f"copy path {source} is a symlink or junction that escapes "
+                f"the fixture directory {resolved_base}"
+            ) from exc
         destination = work_dir / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
         LOGGER.debug("seeding %s -> %s", source, destination)
-        if source.is_dir():
-            shutil.copytree(source, destination, dirs_exist_ok=True)
-        else:
-            shutil.copy2(source, destination)
+        _copy_seed_entry(source, destination, resolved_base)
 
 
 def _run_sut(
@@ -574,6 +701,7 @@ def _run_sut(
 
 def execute_case(case: Case, config: EngineConfig) -> RunResult:
     """Run one case under cmd.exe, then evaluate assertions, then teardown."""
+    multiprocessing.freeze_support()
     require_windows()
     started = time.perf_counter()
     warnings = _script_warnings(case)
@@ -588,12 +716,14 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
         config.safe_defaults,
     )
     work_dir = Path(tempfile.mkdtemp(prefix="battest-"))
+    result: RunResult | None = None
     try:
         try:
             prepared = _prepare_work_dir(case, config, work_dir, encoding=encoding)
         except (OSError, ValueError, MockError) as exc:
             LOGGER.error("case %s failed before execution: %s", case.case_id, exc)
-            return _error_result(case, started, warnings, str(exc))
+            result = _error_result(case, started, warnings, str(exc))
+            return result
         deadline = time.perf_counter() + timeout
         result = _run_sut(
             case,
@@ -614,12 +744,21 @@ def execute_case(case: Case, config: EngineConfig) -> RunResult:
             encoding,
             prepared.teardown_path,
         )
-        return _apply_teardown_result(result, teardown_error)
+        result = _apply_teardown_result(result, teardown_error)
+        return _with_duration(result, started)
     finally:
-        try:
-            shutil.rmtree(work_dir)
-        except OSError as exc:
-            LOGGER.error("failed to remove work dir %s: %s", work_dir, exc)
+        abandoned = result is not None and any(
+            "abandoned still-alive" in item for item in result.warnings
+        )
+        if abandoned:
+            LOGGER.error(
+                "leaving work dir %s because a process was abandoned", work_dir
+            )
+        else:
+            try:
+                shutil.rmtree(work_dir)
+            except OSError as exc:
+                LOGGER.error("failed to remove work dir %s: %s", work_dir, exc)
 
 
 def execute_cases(cases: list[Case], config: EngineConfig) -> list[RunResult]:

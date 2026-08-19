@@ -384,9 +384,12 @@ def test_changelog_documents_current_version() -> None:
     )
     action_docs = (REPO_ROOT / "docs" / "github-action.md").read_text(encoding="utf-8")
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    pin = f"tboy1337/battest@v{version}"
+    major = version.split(".", maxsplit=1)[0]
+    pin = f"tboy1337/battest@v{major}"
     assert pin in action_docs
     assert pin in readme
+    assert f"tboy1337/battest@v{version}" not in readme
+    assert f"tboy1337/battest@v{version}" not in action_docs
 
 
 def test_installer_verifies_github_asset_digest() -> None:
@@ -402,6 +405,9 @@ def test_installer_verifies_github_asset_digest() -> None:
     assert "battest-installer" in release
     assert "Tls12" in release
     assert "digest" in release
+    assert "BAD_URL" in release
+    assert "github.com" in release
+    assert "objects.githubusercontent.com" in release
     assert "releases/latest" in release
     assert "per_page=100" not in release
     hasher = (
@@ -422,6 +428,21 @@ def test_dev_requirements_match_pyproject_extra() -> None:
     ):
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or stripped.startswith("-r "):
+            continue
+        listed.add(stripped)
+    assert listed == extra
+
+
+def test_runtime_requirements_match_pyproject_dependencies() -> None:
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    extra = set(pyproject["project"]["dependencies"])
+    listed: set[str] = set()
+    requirements = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
+    for line in requirements.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
             continue
         listed.add(stripped)
     assert listed == extra
