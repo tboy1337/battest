@@ -182,6 +182,8 @@ jobs:
           if ($code -eq 0) {
             throw "expected battest to fail when the discovery path is missing"
           }
+          # pwsh -Command exits with the last native command's code otherwise.
+          exit 0
 
       - name: Assert JUnit written on discovery failure
         shell: pwsh

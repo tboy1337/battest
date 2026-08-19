@@ -642,6 +642,7 @@ def test_ci_action_dogfood_records_discovery_failure_without_continue_on_error()
     assert "Invoke-BattestAction" in fail_run
     assert "PSNativeCommandUseErrorActionPreference" in fail_run
     assert "expected battest to fail" in fail_run
+    assert "exit 0" in fail_run
     assert_step = next(
         step
         for step in steps
