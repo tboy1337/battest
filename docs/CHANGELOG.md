@@ -5,6 +5,10 @@ All notable changes to battest are documented in this file. Release tags follow
 
 ## [Unreleased]
 
+- Marketplace listing `name` is `battest Action` so GitHub does not reject it
+  as colliding with user [BATTEST](https://github.com/BATTEST).
+  `uses: tboy1337/battest@v1` is unchanged. Action branding (`check-square`,
+  `blue`) is set for the listing.
 - Installer tests assert the parsed GitHub asset-host allowlist and URI host
   check. The regex timeout test builds its nested-quantifier pattern at
   runtime so CodeQL does not treat those fixtures as URL sanitizers or a

@@ -1,6 +1,9 @@
-name: battest
+name: battest Action
 description: Run battest Windows batch runtime tests. Requires a Windows runner.
 author: tboy1337
+branding:
+  icon: check-square
+  color: blue
 inputs:
   path:
     description: Path to discover tests from (file or directory)

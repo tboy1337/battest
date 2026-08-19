@@ -485,6 +485,25 @@ def test_root_action_yml_is_composite() -> None:
     loaded = yaml.safe_load(action_path.read_text(encoding="utf-8"))
     assert loaded["runs"]["using"] == "composite"
     assert "junit-xml" in loaded["outputs"]
+    display_name = str(loaded["name"])
+    # GitHub Marketplace rejects names that match a user/org. User BATTEST
+    # (https://github.com/BATTEST) makes an exact "battest" name unpublishable.
+    assert display_name.casefold() != "battest"
+    assert "battest" in display_name.casefold()
+    assert len(str(loaded["description"])) <= 125
+    branding = loaded["branding"]
+    assert isinstance(branding, dict)
+    assert branding.get("icon")
+    assert branding.get("color") in {
+        "white",
+        "yellow",
+        "blue",
+        "green",
+        "orange",
+        "red",
+        "purple",
+        "gray-dark",
+    }
     run_source = "\n".join(str(step.get("run", "")) for step in loaded["runs"]["steps"])
     env_blob = "\n".join(str(step.get("env", "")) for step in loaded["runs"]["steps"])
     assert "${{ inputs.path }}" not in run_source
